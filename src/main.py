@@ -14,6 +14,11 @@ from app.api import (
     bookmark_api,
     subscription_api,
     payment_api,
+    ai_api,
+    mypage_api,
+    post_api,
+    support_api,
+    auth_api,
 )
 
 @asynccontextmanager
@@ -55,3 +60,8 @@ app.include_router(report_api.router, prefix="/reports", tags=["report"])
 app.include_router(bookmark_api.router, prefix="/bookmarks", tags=["bookmarks"])
 app.include_router(subscription_api.router, prefix="/subscriptions", tags=["subscriptions"])
 app.include_router(payment_api.router, prefix="/payments", tags=["payments"])
+app.include_router(post_api.router, prefix="/post", tags=["posts"])
+app.include_router(mypage_api.router, prefix="/mypage", tags=["mypage"])
+app.include_router(auth_api.router, prefix="/auth", tags=["auth"])
+app.include_router(support_api.router, prefix="/support", tags=["support"])
+app.include_router(ai_api.router, prefix="/ai", tags=["ai"])
