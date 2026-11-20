@@ -31,5 +31,5 @@ class Post(Base):
     post_like_count: Mapped[int | None] = mapped_column(Integer, default=0)
 
     # 관계
-    user: Mapped["User"] = relationship("User")
+    user: Mapped["User"] = relationship("User", back_populates="posts")
     comments: Mapped[list["PostComment"]] = relationship("PostComment", back_populates="post")

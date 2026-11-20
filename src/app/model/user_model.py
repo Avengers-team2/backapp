@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import BigInteger, Date, String, Text, Enum, DateTime, Identity, UniqueConstraint, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.enum.user_enum import UserProvider
+from app.model.post_model import Post
 
 # PostgreSQL의 Base를 상속받아서 서버가 켜질 때 동기화시킨다.
 from app.infrastructure.postgresql import Base
@@ -42,4 +43,4 @@ class User(Base):
 
     # 관계
     # cascade: User가 삭제되면 참조된 테이블을 모두 같이 연쇄삭제
-    posts: Mapped[list["Post"]] = relationship("Post", back_populates="users", cascade="all, delete-orphan")
+    posts: Mapped[list["Post"]] = relationship("Post", back_populates="user", cascade="all, delete-orphan")

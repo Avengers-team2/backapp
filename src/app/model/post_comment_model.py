@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import BigInteger, Text, DateTime, Identity, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.model.user_model import User
 
 
 from app.infrastructure.postgresql import Base

@@ -2,7 +2,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from app.enum.post_enum import PostCategoryEnum
 from app.schema.user_schema import UserSummaryDTO
-from app.schema.comment_schema import CommentResponseDTO
+from app.schema.post_comment_schema import CommentResponseDTO
 
 # VO
 class PostVO(BaseModel):
