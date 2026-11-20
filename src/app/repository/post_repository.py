@@ -179,5 +179,11 @@ class PostRepository:
         return list(result.scalars().all()), total
 
 
+    async def exists_post(self, post_id: int) -> bool:
+        query = select(exists().where(Post.post_id == post_id, Post.post_deleted_at.is_(None)))
+        result = await self.db.execute(query)
+        return result.scalar()
+
+
 def get_post_repository(db: AsyncSession = Depends(get_postgresql_db)):
     return PostRepository(db)

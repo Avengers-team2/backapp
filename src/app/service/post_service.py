@@ -7,12 +7,15 @@ from app.schema.post_comment_schema import CommentResponseDTO
 from app.schema.post_like_schema import PostLikeStatusResponseDTO
 from app.schema.user_schema import UserSummaryDTO
 from app.repository.post_like_repository import PostLikeRepository, get_post_like_repository
+from app.repository.post_bookmark_repository import PostBookmarkRepository, get_post_bookmark_repository
+from app.schema.post_bookmark_schema import PostBookmarkStatusResponseDTO
 
 
 class PostService:
-    def __init__(self, post_repo: PostRepository, like_repo: PostLikeRepository):
+    def __init__(self, post_repo: PostRepository, like_repo: PostLikeRepository, bookmark_repo: PostBookmarkRepository):
         self.post_repo = post_repo
         self.like_repo = like_repo
+        self.bookmark_repo = bookmark_repo
 
     async def create_post(self, user_id: int, post: PostCreateDTO) -> int:
         new_post_id = await self.post_repo.create_post(user_id, post)
@@ -214,8 +217,64 @@ class PostService:
         return PostLikeStatusResponseDTO(is_liked=is_liked, post_like_count=like_count)
 
 
+    async def toggle_bookmark(self, post_id: int, user_id: int) -> PostBookmarkStatusResponseDTO:
+        try:
+            bookmarked = await self.bookmark_repo.exists_bookmark(user_id, post_id)
+
+            if not bookmarked:
+                # 북마크: 삭제 안 된 글인지 먼저 확인
+                if not await self.post_repo.exists_post(post_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="게시글이 없거나 삭제되었습니다."
+                    )
+                await self.bookmark_repo.create_bookmark(user_id, post_id)
+                is_bookmarked = True
+
+            else:
+                # 북마크 취소 (글이 삭제됐어도 취소는 가능)
+                await self.bookmark_repo.delete_bookmark(user_id, post_id)
+                is_bookmarked = False
+
+            await self.post_repo.db.commit()
+
+        except HTTPException:
+            raise
+        except Exception:
+            await self.post_repo.db.rollback()
+            raise
+
+        return PostBookmarkStatusResponseDTO(is_bookmarked=is_bookmarked)
+
+
+    async def get_my_bookmarks(
+            self,
+            user_id: int,
+            page: int,
+            size: int = 10
+        ) -> PageResponseDTO[PostListResponseDTO]:
+
+        if page < 1:
+            page = 1
+
+        offset = (page - 1) * size
+        posts, total = await self.bookmark_repo.find_my_bookmarks(user_id, offset, size)
+
+        total_pages = (total + size - 1) // size
+        items = [PostListResponseDTO.model_validate(p) for p in posts]
+
+        return PageResponseDTO(
+            total_count=total,
+            total_pages=total_pages,
+            offset=offset,
+            limit=size,
+            items=items
+        )
+
+
 def get_post_service(
         post_repository: PostRepository = Depends(get_post_repository),
-        like_repository: PostLikeRepository = Depends(get_post_like_repository)
+        like_repository: PostLikeRepository = Depends(get_post_like_repository),
+        bookmark_repository: PostBookmarkRepository = Depends(get_post_bookmark_repository)
     ):
-    return PostService(post_repository, like_repository)
+    return PostService(post_repository, like_repository, bookmark_repository)

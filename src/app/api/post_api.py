@@ -154,3 +154,44 @@ async def toggle_like(
         message="좋아요 취소" if not like_status.is_liked else "좋아요 성공",
         data=like_status
     )
+
+
+# 내 북마크 목록
+@router.get(
+    "/bookmarks/me",
+    summary="내 북마크 목록 조회",
+    response_model=ApiResponseDTO
+)
+async def get_my_bookmarks(
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    size: int = Query(10, ge=1, le=50, description="페이지당 개수"),
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    post_service: PostService = Depends(get_post_service)
+):
+    paged_posts = await post_service.get_my_bookmarks(user_claims.user_id, page, size)
+
+    return ApiResponseDTO(
+        success=True,
+        message="내 북마크 목록 조회 성공",
+        data=paged_posts
+    )
+
+
+# 게시글 북마크 토글 (누르면 북마크, 다시 누르면 취소)
+@router.post(
+    "/{post_id}/bookmark",
+    summary="게시글 북마크 / 북마크 취소",
+    response_model=ApiResponseDTO
+)
+async def toggle_bookmark(
+    post_id: int,
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    post_service: PostService = Depends(get_post_service)
+):
+    bookmark_status = await post_service.toggle_bookmark(post_id, user_claims.user_id)
+
+    return ApiResponseDTO(
+        success=True,
+        message="북마크 취소" if not bookmark_status.is_bookmarked else "북마크 성공",
+        data=bookmark_status
+    )
