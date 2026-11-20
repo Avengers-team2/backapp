@@ -45,3 +45,17 @@ def get_tokens(request: Request) -> JwtTokenDTO:
         access_token=access_token,
         refresh_token=refresh_token
     )
+
+
+# 3. 로그인 선택 (로그인했으면 사용자 정보, 안 했으면 None)
+#    게시글 상세처럼 비로그인도 볼 수 있는 페이지에서 사용
+def get_optional_user(request: Request) -> UserClaimDTO | None:
+    access_token = request.cookies.get("access_token")
+
+    if not access_token:
+        return None
+
+    try:
+        return parse_token(access_token)
+    except Exception:
+        return None

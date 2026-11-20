@@ -9,6 +9,15 @@ from app.model.post_model import Post
 from app.model.post_comment_model import PostComment
 from app.enum.post_enum import PostSortEnum
 
+# 게시글별 "삭제 안 된 댓글 수"를 세는 서브쿼리 (목록 조회에서 같이 사용)
+def comment_count_subquery():
+    return (
+        select(func.count(PostComment.comment_id))
+            .where(PostComment.post_id == Post.post_id, PostComment.comment_deleted_at.is_(None))
+            .correlate(Post)
+            .scalar_subquery()
+    )
+
 
 class PostRepository:
     def __init__(self, db: AsyncSession):
@@ -52,37 +61,43 @@ class PostRepository:
         category: str | None = None
     ):
         query = (
-            select(Post)
+            select(Post, comment_count_subquery().label("comment_count"))
                 .options(joinedload(Post.user))
                 .where(Post.post_deleted_at.is_(None))
         )
         if search:
             query = query.where(or_(Post.post_title.ilike(f"%{search}%"), Post.post_content.ilike(f"%{search}%")))
-
+        
         if category:
             query = query.where(Post.post_category == category)
-
+        
         count_query = select(func.count(Post.post_id)).where(Post.post_deleted_at.is_(None))
+        
         if search:
             count_query = count_query.where(or_(Post.post_title.ilike(f"%{search}%"), Post.post_content.ilike(f"%{search}%")))
+        
         if category:
             count_query = count_query.where(Post.post_category == category)
-
+        
         if sort_by == PostSortEnum.OLDEST:
             query = query.order_by(asc(Post.post_id))
+        
         elif sort_by == PostSortEnum.VIEWS:
             query = query.order_by(desc(Post.post_view_count), desc(Post.post_id))
+        
         elif sort_by == PostSortEnum.LIKES:
             query = query.order_by(desc(Post.post_like_count), desc(Post.post_id))
+        
         elif sort_by == PostSortEnum.LATEST:
             query = query.order_by(desc(Post.post_id))
+        
         # 정렬된 상태에서 offset, limit
         query = query.offset(offset).limit(limit)
 
         count_result = await self.db.execute(count_query)
         total = count_result.scalar_one()
         result = await self.db.execute(query)
-        return list(result.scalars().all()), total
+        return list(result.tuples().all()), total
 
 
     async def update_post(self, post_id: int, update_data: dict) -> int:
@@ -160,7 +175,7 @@ class PostRepository:
 
     async def find_my_posts(self, user_id: int, offset: int, limit: int):
         query = (
-            select(Post)
+            select(Post, comment_count_subquery().label("comment_count"))
                 .options(joinedload(Post.user))
                 .where(Post.user_id == user_id, Post.post_deleted_at.is_(None))
                 .order_by(desc(Post.post_id))
@@ -176,7 +191,7 @@ class PostRepository:
         count_result = await self.db.execute(count_query)
         total = count_result.scalar_one()
         result = await self.db.execute(query)
-        return list(result.scalars().all()), total
+        return list(result.tuples().all()), total
 
 
     async def exists_post(self, post_id: int) -> bool:

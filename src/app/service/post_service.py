@@ -12,6 +12,13 @@ from app.schema.post_bookmark_schema import PostBookmarkStatusResponseDTO
 
 
 class PostService:
+    # (게시글, 댓글 수) → 목록 DTO
+    @staticmethod
+    def _to_list_dto(post, comment_count: int) -> PostListResponseDTO:
+        dto = PostListResponseDTO.model_validate(post)
+        dto.post_comment_count = comment_count
+        return dto
+
     def __init__(self, post_repo: PostRepository, like_repo: PostLikeRepository, bookmark_repo: PostBookmarkRepository):
         self.post_repo = post_repo
         self.like_repo = like_repo
@@ -48,7 +55,7 @@ class PostService:
         )
         
         total_pages = (total + size - 1) // size
-        items = [PostListResponseDTO.model_validate(p) for p in posts]
+        items = [self._to_list_dto(p, c) for p, c in posts]
 
         return PageResponseDTO(
             total_count=total,
@@ -59,7 +66,7 @@ class PostService:
             )
 
 
-    async def get_post_detail(self, post_id: int) -> PostDetailResponseDTO:
+    async def get_post_detail(self, post_id: int, user_id: int | None = None) -> PostDetailResponseDTO:
         post = await self.post_repo.get_by_id(post_id)
         
         if post is None:
@@ -91,6 +98,19 @@ class PostService:
                 if parent:
                     parent.children.append(dto)
 
+        # 화면에 실제로 보이는 댓글 수 (부모가 삭제돼 숨겨진 답글은 제외)
+        def count_tree(nodes) -> int:
+            return sum(1 + count_tree(n.children) for n in nodes)
+
+        comment_count = count_tree(root_comments)
+
+        # 로그인한 경우에만 좋아요·북마크 여부 확인
+        is_liked = False
+        is_bookmarked = False
+        if user_id is not None:
+            is_liked = await self.like_repo.exists_like(user_id, post_id)
+            is_bookmarked = await self.bookmark_repo.exists_bookmark(user_id, post_id) 
+
         return PostDetailResponseDTO(
             post_id=post.post_id,
             post_category=post.post_category,
@@ -103,7 +123,10 @@ class PostService:
             post_updated_at=post.post_updated_at,
             post_deleted_at=post.post_deleted_at,
             user=UserSummaryDTO.model_validate(post.user),
-            comments=root_comments
+            comments=root_comments,
+            post_comment_count=comment_count,
+            is_liked=is_liked,
+            is_bookmarked=is_bookmarked
         )
 
 
@@ -174,7 +197,7 @@ class PostService:
         posts, total = await self.post_repo.find_my_posts(user_id, offset, size)
 
         total_pages = (total + size - 1) // size
-        items = [PostListResponseDTO.model_validate(p) for p in posts]
+        items = [self._to_list_dto(p, c) for p, c in posts]
 
         return PageResponseDTO(
             total_count=total,
@@ -261,7 +284,7 @@ class PostService:
         posts, total = await self.bookmark_repo.find_my_bookmarks(user_id, offset, size)
 
         total_pages = (total + size - 1) // size
-        items = [PostListResponseDTO.model_validate(p) for p in posts]
+        items = [self._to_list_dto(p, c) for p, c in posts]
 
         return PageResponseDTO(
             total_count=total,

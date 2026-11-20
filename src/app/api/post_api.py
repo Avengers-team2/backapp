@@ -4,7 +4,9 @@ from app.schema.common_schema import ApiResponseDTO
 from app.schema.post_schema import PostCreateDTO, PostUpdateDTO
 from app.schema.user_schema import UserClaimDTO
 from app.enum.post_enum import PostSortEnum, PostCategoryEnum
-from app.dependencie.auth_dependency import get_current_user
+from app.dependencie.auth_dependency import get_current_user, get_optional_user
+from app.service.post_comment_service import CommentService, get_comment_service
+from app.schema.post_comment_schema import CommentCreateDTO, CommentUpdateDTO
 
 router = APIRouter()
 
@@ -56,7 +58,7 @@ async def get_my_posts(
     )
 
 
-# 게시글 상세 조회
+# 게시글 상세 조회 (비로그인도 가능, 로그인하면 좋아요·북마크 여부 포함)
 @router.get(
     "/{post_id}",
     summary="게시글 상세 조회",
@@ -64,9 +66,11 @@ async def get_my_posts(
 )
 async def get_post_detail(
     post_id: int,
+    user_claims: UserClaimDTO | None = Depends(get_optional_user),
     post_service: PostService = Depends(get_post_service)
 ):
-    detail = await post_service.get_post_detail(post_id)
+    user_id = user_claims.user_id if user_claims else None
+    detail = await post_service.get_post_detail(post_id, user_id)
 
     return ApiResponseDTO(
         success=True,
@@ -194,4 +198,66 @@ async def toggle_bookmark(
         success=True,
         message="북마크 취소" if not bookmark_status.is_bookmarked else "북마크 성공",
         data=bookmark_status
+    )
+
+
+# 댓글·답글 작성 (parent_comment_id가 있으면 답글)
+@router.post(
+    "/{post_id}/comments",
+    summary="댓글 작성",
+    response_model=ApiResponseDTO,
+    status_code=status.HTTP_201_CREATED
+)
+async def create_comment(
+    post_id: int,
+    comment_dto: CommentCreateDTO,
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    comment_service: CommentService = Depends(get_comment_service)
+):
+    new_comment_id = await comment_service.create_comment(post_id, user_claims.user_id, comment_dto)
+
+    return ApiResponseDTO(
+        success=True,
+        message="댓글 작성 성공",
+        data={"comment_id": new_comment_id}
+    )
+
+
+# 댓글 수정
+@router.put(
+    "/comments/{comment_id}",
+    summary="댓글 수정",
+    response_model=ApiResponseDTO
+)
+async def update_comment(
+    comment_id: int,
+    update_dto: CommentUpdateDTO,
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    comment_service: CommentService = Depends(get_comment_service)
+):
+    updated_id = await comment_service.update_comment(comment_id, user_claims.user_id, update_dto)
+
+    return ApiResponseDTO(
+        success=True,
+        message="댓글 수정 성공",
+        data={"comment_id": updated_id}
+    )
+
+
+# 댓글 삭제
+@router.delete(
+    "/comments/{comment_id}",
+    summary="댓글 삭제",
+    response_model=ApiResponseDTO
+)
+async def delete_comment(
+    comment_id: int,
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    comment_service: CommentService = Depends(get_comment_service)
+):
+    await comment_service.delete_comment(comment_id, user_claims.user_id)
+
+    return ApiResponseDTO(
+        success=True,
+        message="댓글 삭제 성공"
     )
