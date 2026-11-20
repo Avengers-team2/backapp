@@ -1,15 +1,18 @@
 from fastapi import Depends, HTTPException, status
 from app.repository.post_repository import PostRepository, get_post_repository
+from app.enum.post_enum import PostSortEnum, PostCategoryEnum
 from app.schema.post_schema import PostCreateDTO, PostUpdateDTO, PostListResponseDTO, PostDetailResponseDTO
 from app.schema.common_schema import PageResponseDTO
-from app.enum.post_enum import PostSortEnum, PostCategoryEnum
 from app.schema.post_comment_schema import CommentResponseDTO
+from app.schema.post_like_schema import PostLikeStatusResponseDTO
 from app.schema.user_schema import UserSummaryDTO
+from app.repository.post_like_repository import PostLikeRepository, get_post_like_repository
 
 
 class PostService:
-    def __init__(self, post_repo: PostRepository):
+    def __init__(self, post_repo: PostRepository, like_repo: PostLikeRepository):
         self.post_repo = post_repo
+        self.like_repo = like_repo
 
     async def create_post(self, user_id: int, post: PostCreateDTO) -> int:
         new_post_id = await self.post_repo.create_post(user_id, post)
@@ -179,7 +182,40 @@ class PostService:
         )
 
 
+    async def toggle_like(self, post_id: int, user_id: int) -> PostLikeStatusResponseDTO:
+        try:
+            liked = await self.like_repo.exists_like(user_id, post_id)
+            if not liked:
+                like_count = await self.post_repo.increase_like_count(post_id)
+                if like_count is None:
+                    await self.post_repo.db.rollback()
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="게시글이 없거나 삭제되었습니다."
+                    )
+                await self.like_repo.create_like(user_id, post_id)
+                is_liked = True
+            else:
+                await self.like_repo.delete_like(user_id, post_id)
+                like_count = await self.post_repo.decrease_like_count(post_id)
+                if like_count is None:
+                    await self.post_repo.db.rollback()
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="게시글이 없거나 삭제되었습니다."
+                    )
+                is_liked = False
+            await self.post_repo.db.commit()
+        except HTTPException:
+            raise
+        except Exception:
+            await self.post_repo.db.rollback()
+            raise
+        return PostLikeStatusResponseDTO(is_liked=is_liked, post_like_count=like_count)
+
+
 def get_post_service(
-        post_repository: PostRepository = Depends(get_post_repository)
+        post_repository: PostRepository = Depends(get_post_repository),
+        like_repository: PostLikeRepository = Depends(get_post_like_repository)
     ):
-    return PostService(post_repository)
+    return PostService(post_repository, like_repository)

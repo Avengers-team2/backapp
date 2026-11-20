@@ -134,3 +134,23 @@ async def delete_post(
         success=True,
         message="게시글 삭제 성공"
     )
+
+
+# 게시글 좋아요 토글 (누르면 좋아요, 다시 누르면 취소)
+@router.post(
+    "/{post_id}/like",
+    summary="게시글 좋아요 / 좋아요 취소",
+    response_model=ApiResponseDTO
+)
+async def toggle_like(
+    post_id: int,
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    post_service: PostService = Depends(get_post_service)
+):
+    like_status = await post_service.toggle_like(post_id, user_claims.user_id)
+
+    return ApiResponseDTO(
+        success=True,
+        message="좋아요 취소" if not like_status.is_liked else "좋아요 성공",
+        data=like_status
+    )
