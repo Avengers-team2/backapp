@@ -6,12 +6,6 @@ class PostCategoryEnum(str, enum.Enum):
     SUPPORT_QNA = "SUPPORT_QNA"  # 지원사업Q&A
     FREE = "FREE"                # 자유
 
-class PostCategoryEnum(str, enum.Enum):
-    FREE = "FREE" # 자유게시판
-    STARTUP_INFO = "STARTUP_INFO" # 창업 정보
-    OPERATION = "OPERATION" # 운영 고민
-    QNA = "QNA" # 질문·답변
-
 class PostSortEnum(str, enum.Enum):
     LATEST = "LATEST" # 최신순
     OLDEST = "OLDEST" # 오래된순

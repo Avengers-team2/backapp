@@ -31,3 +31,12 @@ class UserSummaryDTO(BaseModel):
 
     class Config:
         from_attributes = True
+
+# JWT 토큰에 담는 로그인 사용자 정보
+class UserClaimDTO(BaseModel):
+    user_id: int
+    user_email: str
+    user_provider: UserProvider
+
+    class Config:
+        from_attributes = True
