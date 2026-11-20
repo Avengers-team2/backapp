@@ -13,7 +13,7 @@ class SupportBookmark(Base):
     # PK
     bookmark_id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     # FK
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id"), nullable=False)
 
     bookmark_program_id: Mapped[str] = mapped_column(String(100), nullable=False)
     bookmark_program_source: Mapped[str] = mapped_column(String(30), nullable=False)

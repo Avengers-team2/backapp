@@ -13,7 +13,7 @@ class AnalysisInput(Base):
     # PK
     input_id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     # FK
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id"), nullable=False)
     
     input_trdar_cd: Mapped[str] = mapped_column(String(20), nullable=False)
 
