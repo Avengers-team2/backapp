@@ -5,6 +5,7 @@ class PostCategoryEnum(str, enum.Enum):
     MARKET_INFO = "MARKET_INFO"  # 상권정보
     SUPPORT_QNA = "SUPPORT_QNA"  # 지원사업Q&A
     FREE = "FREE"                # 자유
+    NOTICE = "NOTICE"            # 공지
 
 class PostSortEnum(str, enum.Enum):
     LATEST = "LATEST" # 최신순

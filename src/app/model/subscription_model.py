@@ -14,7 +14,7 @@ class Subscription(Base):
     # PK
     subscription_id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     # FK
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id"), nullable=False)
 
     subscription_status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus, native_enum=False, length=20), default=SubscriptionStatus.ACTIVE, nullable=False, )
 

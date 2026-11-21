@@ -48,6 +48,7 @@ class PostListResponseDTO(BaseModel):
     post_view_count: int | None = 0
     post_like_count: int | None = 0
     post_created_at: datetime
+    post_comment_count: int = 0
 
     user: UserSummaryDTO
 

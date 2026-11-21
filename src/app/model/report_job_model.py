@@ -14,7 +14,7 @@ class ReportJob(Base):
     # PK
     report_job_id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     # FK
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id"), nullable=False)
 
     report_job_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     report_job_file_type: Mapped[str] = mapped_column(String(10), nullable=False)
