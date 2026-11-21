@@ -1,13 +1,13 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.infrastructure.postgresql import get_postgresql_db
 from fastapi import Depends
-from sqlalchemy import insert, select, update, delete, func, exists, desc, asc, or_, and_
+from sqlalchemy import insert, select, update, delete, func, exists, desc, asc, or_, and_, case
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.schema.post_schema import PostCreateDTO
 from app.model.post_model import Post
 from app.model.post_comment_model import PostComment
-from app.enum.post_enum import PostSortEnum
+from app.enum.post_enum import PostSortEnum, PostCategoryEnum
 
 # 게시글별 "삭제 안 된 댓글 수"를 세는 서브쿼리 (목록 조회에서 같이 사용)
 def comment_count_subquery():
@@ -78,6 +78,10 @@ class PostRepository:
         
         if category:
             count_query = count_query.where(Post.post_category == category)
+
+        query = query.order_by(
+            case((Post.post_category == PostCategoryEnum.NOTICE, 0), else_=1)
+        )
         
         if sort_by == PostSortEnum.OLDEST:
             query = query.order_by(asc(Post.post_id))
