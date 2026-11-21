@@ -19,6 +19,7 @@ from app.api import (
     post_api,
     support_api,
     auth_api,
+    s3_api
 )
 
 @asynccontextmanager
@@ -65,3 +66,4 @@ app.include_router(mypage_api.router, prefix="/mypage", tags=["mypage"])
 app.include_router(auth_api.router, prefix="/auth", tags=["auth"])
 app.include_router(support_api.router, prefix="/support", tags=["support"])
 app.include_router(ai_api.router, prefix="/ai", tags=["ai"])
+app.include_router(s3_api.router, prefix="/upload", tags=["upload"])
