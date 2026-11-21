@@ -21,6 +21,8 @@ class UserVO(BaseModel):
     user_provider_id: str | None = None
     user_status: str
     user_business_status: str
+    user_interest_region: str | None = None
+    user_interest_industry: str | None = None 
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 

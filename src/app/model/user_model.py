@@ -37,6 +37,9 @@ class User(Base):
     user_status: Mapped[str] = mapped_column(String(20), nullable=False)
     user_business_status: Mapped[str] = mapped_column(String(30), nullable=False)
 
+    user_interest_region: Mapped[str | None] = mapped_column(String(100))
+    user_interest_industry: Mapped[str | None] = mapped_column(String(100))
+
     __table_args__ = (
         UniqueConstraint("user_email", "user_provider", name="uq_users_email_provider"),
     )
