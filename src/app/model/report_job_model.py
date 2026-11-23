@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Identity, String, Text
+from sqlalchemy import Integer
 from sqlalchemy.orm import Mapped, mapped_column
 from app.enum.report_enum import ReportStatus
 
@@ -20,6 +21,8 @@ class ReportJob(Base):
     report_job_file_type: Mapped[str] = mapped_column(String(10), nullable=False)
     report_job_file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     report_job_file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    report_job_page_count: Mapped[int | None] = mapped_column(Integer)      # PDF 쪽수 (DOCX는 None)
+    report_job_file_hash: Mapped[str | None] = mapped_column(String(64))    # SHA-256, 같은 파일 캐시용
 
     report_job_created_at: Mapped[datetime] = mapped_column( DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc),)
     report_job_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

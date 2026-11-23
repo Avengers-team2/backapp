@@ -11,8 +11,6 @@ class DefaultRepository:
 
     # 순수 함수
 
-
-
 # 주입 팩토리 메서드
 def get_default_repository(db: AsyncSession = Depends(get_postgresql_db)):
     return DefaultRepository(db)

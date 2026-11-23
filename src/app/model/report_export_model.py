@@ -6,7 +6,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.infrastructure.postgresql import Base
 from typing import TYPE_CHECKING
 
-
 class ReportExport(Base):
     __tablename__ = "report_export"
 

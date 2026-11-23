@@ -116,7 +116,6 @@ class PostService:
 
         return updated_id
 
-
     async def delete_post(self, post_id: int, user_id: int) -> bool:
         await _get_owned_post(self.post_repo, post_id, user_id, "본인 글만 삭제할 수 있습니다")
 
@@ -126,7 +125,6 @@ class PostService:
             raise _post_not_found_error()
 
         return True
-
 
     async def get_my_posts(
             self,
@@ -139,7 +137,6 @@ class PostService:
         posts, total = await self.post_repo.find_my_posts(user_id, offset, size)
 
         return _build_post_page(posts, total, offset, size)
-
 
     async def toggle_like(self, post_id: int, user_id: int) -> PostLikeStatusResponseDTO:
         try:
@@ -193,7 +190,6 @@ class PostService:
 
         return PostBookmarkStatusResponseDTO(is_bookmarked=is_bookmarked)
 
-
     async def get_my_bookmarks(
             self,
             user_id: int,
@@ -223,7 +219,6 @@ def _post_not_found_error() -> HTTPException:
         status_code=status.HTTP_404_NOT_FOUND,
         detail="게시글이 없거나 삭제되었습니다."
     )
-
 
 # 페이지 번호를 1 이상으로 맞추고 offset 계산
 def _calc_offset(page: int, size: int) -> int:
