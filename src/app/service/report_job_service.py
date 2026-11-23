@@ -1,0 +1,168 @@
+import asyncio
+import hashlib
+import io
+import os
+
+from fastapi import Depends, HTTPException, UploadFile, status
+
+from app.enum.report_enum import ReportStatus
+from app.enum.s3_enum import S3Folder
+from app.infrastructure.postgresql import AsyncSessionLocal
+from app.model.report_job_model import ReportJob
+from app.repository.report_job_repository import ReportJobRepository, get_report_job_repository
+from app.schema.common_schema import PageResponseDTO
+from app.schema.report_job_schema import ReportJobResponseDTO
+from app.service.s3_service import S3Service, get_s3_service
+
+ALLOWED_FILE_TYPES = {"pdf", "docx"}        # 기획서 허용 형식 (hwp는 팀 결정 후 추가)
+MAX_FILE_SIZE = 10 * 1024 * 1024            # 10MB (s3_api와 동일)
+DELETABLE_STATUSES = {ReportStatus.PENDING, ReportStatus.FAILED}   # 시작 전이거나 실패한 것만 삭제 가능
+DEMO_STEP_SECONDS = 2                       # AI 연결 전, 진행 모달 확인용 단계별 대기 시간
+
+
+# 예외처리
+# 트랜잭션 관리
+class ReportJobService:
+
+    def __init__(self, report_job_repo: ReportJobRepository, s3_service: S3Service):
+        self.report_job_repo = report_job_repo
+        self.s3_service = s3_service
+
+    # 1. 기획서 업로드 → S3 저장 → report_job 생성 (status: PENDING)
+    async def upload(self, user_id: int, file: UploadFile) -> ReportJobResponseDTO:
+        file_name = os.path.basename(file.filename or "")
+        file_type = os.path.splitext(file_name)[1].lower().lstrip(".")   # "카페.PDF" → "pdf"
+
+        if file_type not in ALLOWED_FILE_TYPES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "PDF, DOCX 파일만 업로드할 수 있습니다.")
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "빈 파일은 업로드할 수 없습니다.")
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "파일은 10MB 이하만 업로드할 수 있습니다.")
+
+        file_hash = hashlib.sha256(content).hexdigest()
+        page_count = count_pdf_pages(content) if file_type == "pdf" else None
+
+        # 위에서 끝까지 읽었으니 처음으로 되돌린 뒤 S3에 올린다.
+        await file.seek(0)
+        uploaded = await self.s3_service.upload_file(file=file, folder=S3Folder.REPORT.value)
+
+        report_job_id = await self.report_job_repo.create_job({
+            "user_id": user_id,
+            "report_job_file_name": file_name,
+            "report_job_file_type": file_type,
+            "report_job_file_size": len(content),
+            "report_job_file_path": uploaded.file_key,
+            "report_job_page_count": page_count,
+            "report_job_file_hash": file_hash,
+            "report_job_status": ReportStatus.PENDING,
+        })
+
+        job = await self.report_job_repo.get_by_id(report_job_id)
+        return ReportJobResponseDTO.model_validate(job)
+
+    # 2. 검토 시작 (PENDING → FILE_CHECK). 실제 검토는 api에서 백그라운드로 실행
+    async def start(self, user_id: int, report_job_id: int) -> ReportJobResponseDTO:
+        job = await self._get_owned_job(user_id, report_job_id)
+
+        if job.report_job_status != ReportStatus.PENDING:
+            raise HTTPException(status.HTTP_409_CONFLICT, "이미 시작했거나 끝난 검토입니다.")
+
+        await self.report_job_repo.update_status(report_job_id, ReportStatus.FILE_CHECK)
+
+        job = await self.report_job_repo.get_by_id(report_job_id)
+        return ReportJobResponseDTO.model_validate(job)
+
+    # 3. 검토 상태 조회 (진행 모달이 2~3초마다 호출)
+    async def get_job(self, user_id: int, report_job_id: int) -> ReportJobResponseDTO:
+        job = await self._get_owned_job(user_id, report_job_id)
+        return ReportJobResponseDTO.model_validate(job)
+
+    # 4. 내 검토 요청 목록 (마이페이지)
+    async def get_my_jobs(self, user_id: int, page: int, size: int) -> PageResponseDTO[ReportJobResponseDTO]:
+        offset = (page - 1) * size
+        jobs = await self.report_job_repo.get_by_user(user_id, offset, size)
+        total = await self.report_job_repo.count_by_user(user_id)
+
+        return PageResponseDTO(
+            total_count=total,
+            total_pages=(total + size - 1) // size,
+            offset=offset,
+            limit=size,
+            items=[ReportJobResponseDTO.model_validate(j) for j in jobs]
+        )
+
+    # 5. 검토 요청 삭제 (업로드 화면의 '삭제' 버튼)
+    async def delete_job(self, user_id: int, report_job_id: int) -> None:
+        job = await self._get_owned_job(user_id, report_job_id)
+
+        if job.report_job_status not in DELETABLE_STATUSES:
+            raise HTTPException(status.HTTP_409_CONFLICT, "검토가 진행 중이거나 끝난 요청은 삭제할 수 없습니다.")
+
+        try:
+            await self.s3_service.delete_file(job.report_job_file_path)
+        except Exception:
+            pass   # S3에 파일이 없어도 DB 기록은 지운다.
+
+        await self.report_job_repo.delete_job(report_job_id)
+
+    # 본인 요청인지 확인
+    async def _get_owned_job(self, user_id: int, report_job_id: int) -> ReportJob:
+        job = await self.report_job_repo.get_by_id(report_job_id)
+
+        if job is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "검토 요청을 찾을 수 없습니다.")
+        if job.user_id != user_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "본인의 검토 요청만 볼 수 있습니다.")
+
+        return job
+
+
+# PDF 쪽수 세기 (pypdf가 없거나 읽을 수 없는 파일이면 None)
+def count_pdf_pages(content: bytes) -> int | None:
+    try:
+        from pypdf import PdfReader
+        return len(PdfReader(io.BytesIO(content)).pages)
+    except Exception:
+        return None
+
+
+# 백그라운드 검토 작업
+# 응답을 보낸 뒤에 실행되므로 요청용 DB 세션을 쓰지 않고 새로 연다.
+async def run_report_review(report_job_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        repo = ReportJobRepository(db)
+        try:
+            # 1단계: 파일 확인 (FILE_CHECK는 start에서 이미 설정됨)
+            # TODO(상아): S3에서 파일을 받아 문서 로더로 텍스트 추출, 글자가 너무 적으면 실패 처리
+            await asyncio.sleep(DEMO_STEP_SECONDS)
+
+            # 2단계: AI 검토
+            await repo.update_status(report_job_id, ReportStatus.AI_REVIEW)
+            # TODO(상아): LangChain 항목별 채점 호출
+            await asyncio.sleep(DEMO_STEP_SECONDS)
+
+            # 3단계: 검토 결과 정리
+            await repo.update_status(report_job_id, ReportStatus.SUMMARIZING)
+            # TODO: 점수 합산, report_export 저장
+            await asyncio.sleep(DEMO_STEP_SECONDS)
+
+            await repo.update_status(report_job_id, ReportStatus.COMPLETED)
+
+        except Exception:
+            await db.rollback()
+            await repo.update_status(
+                report_job_id,
+                ReportStatus.FAILED,
+                "검토 중 오류가 발생했습니다. 다시 시도해 주세요."
+            )
+
+
+# 레포지토리 주입 팩토리 함수
+def get_report_job_service(
+        report_job_repo: ReportJobRepository = Depends(get_report_job_repository),
+        s3_service: S3Service = Depends(get_s3_service)
+    ):
+    return ReportJobService(report_job_repo, s3_service)

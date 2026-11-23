@@ -4,7 +4,6 @@ from pydantic.alias_generators import to_camel  # JS 카멜 -> Snake로 변경�
 
 from app.enum.report_enum import ReportStatus
 
-
 # VO
 class ReportJobVO(BaseModel):
     report_job_id: int
@@ -20,3 +19,18 @@ class ReportJobVO(BaseModel):
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
             
+
+# DTO
+# 업로드·상태 조회·목록 응답 (파일 저장 경로와 해시는 화면에 내보내지 않는다)
+class ReportJobResponseDTO(BaseModel):
+    report_job_id: int
+    report_job_file_name: str
+    report_job_file_type: str
+    report_job_file_size: int
+    report_job_page_count: int | None = None
+    report_job_status: ReportStatus
+    report_job_error_message: str | None = None
+    report_job_created_at: datetime | None = None
+    report_job_completed_at: datetime | None = None
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
