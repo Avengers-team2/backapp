@@ -46,10 +46,11 @@ async def get_posts(
 async def get_my_posts(
     page: int = Query(1, ge=1, description="페이지 번호"),
     size: int = Query(10, ge=1, le=50, description="페이지당 개수"),
+    keyword: str | None = Query(None, description="제목·내용 검색어"),
     user_claims: UserClaimDTO = Depends(get_current_user),
     post_service: PostService = Depends(get_post_service)
 ):
-    paged_posts = await post_service.get_my_posts(user_claims.user_id, page, size)
+    paged_posts = await post_service.get_my_posts(user_claims.user_id, page, size, keyword)   # keyword 추가
 
     return ApiResponseDTO(
         success=True,

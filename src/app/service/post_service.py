@@ -130,11 +130,12 @@ class PostService:
             self,
             user_id: int,
             page: int,
-            size: int = 10
+            size: int = 10,
+            keyword: str | None = None
         )-> PageResponseDTO[PostListResponseDTO]:
 
         offset = _calc_offset(page, size)
-        posts, total = await self.post_repo.find_my_posts(user_id, offset, size)
+        posts, total = await self.post_repo.find_my_posts(user_id, offset, size, keyword)   # keyword 추가
 
         return _build_post_page(posts, total, offset, size)
 
