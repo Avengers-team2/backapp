@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import FastAPI
 from app.security.cors import setup_cors
 from app.security.security_headers import set_up_security
@@ -6,6 +7,7 @@ from app.infrastructure.postgresql import engine, Base
 from app.infrastructure.redis import start_redis_client
 from app.infrastructure.s3 import start_s3_client
 import app.model
+from app.infrastructure.external.franchise_api import preload_brands
 
 from app.api import (
     user_api,
@@ -35,8 +37,11 @@ async def lifespan(app: FastAPI):
         async with start_s3_client(app):
             print("S3 연결 성공!")
 
+            brand_task = asyncio.create_task(preload_brands())
+
             # 4. 전이학습 모델 로드
             yield
+            brand_task.cancel()
 
 app = FastAPI(
     lifespan=lifespan,
