@@ -177,20 +177,23 @@ class PostRepository:
         return like_count
 
 
-    async def find_my_posts(self, user_id: int, offset: int, limit: int):
+    async def find_my_posts(self, user_id: int, offset: int, limit: int, search: str | None = None):
         query = (
             select(Post, comment_count_subquery().label("comment_count"))
                 .options(joinedload(Post.user))
                 .where(Post.user_id == user_id, Post.post_deleted_at.is_(None))
-                .order_by(desc(Post.post_id))
-                .offset(offset)
-                .limit(limit)
         )
-
         count_query = (
             select(func.count(Post.post_id))
                 .where(Post.user_id == user_id, Post.post_deleted_at.is_(None))
         )
+    
+        if search:
+            search_condition = or_(Post.post_title.ilike(f"%{search}%"), Post.post_content.ilike(f"%{search}%"))
+            query = query.where(search_condition)
+            count_query = count_query.where(search_condition)
+    
+        query = query.order_by(desc(Post.post_id)).offset(offset).limit(limit)
 
         count_result = await self.db.execute(count_query)
         total = count_result.scalar_one()
