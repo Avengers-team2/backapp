@@ -11,7 +11,7 @@ router = APIRouter()
 
 MAX_IMAGE_SIZE = 5 * 1024 * 1024    # 이미지 최대 5MB
 MAX_FILE_SIZE = 10 * 1024 * 1024    # 파일 최대 10MB
-ALLOWED_FILE_EXTS = {".hwp", ".docx", ".pdf"}  # 기획서 허용 확장자 (한글, 워드, PDF)
+ALLOWED_FILE_EXTS = {".docx", ".pdf"}  # 기획서 허용 확장자 (워드, PDF)
 
 # 1. 이미지 업로드 (게시글 사진 등) — 원본 + 썸네일
 @router.post(
@@ -62,7 +62,7 @@ async def upload_file(
     if ext not in ALLOWED_FILE_EXTS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="hwp, docx, PDF 파일만 업로드할 수 있습니다."
+            detail="docx, PDF 파일만 업로드할 수 있습니다."
         )
 
     if file.size is not None and file.size > MAX_FILE_SIZE:
