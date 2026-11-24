@@ -1,12 +1,5 @@
-"""
-공정거래위원회 가맹정보 브랜드 목록 API
-https://www.data.go.kr/data/15125467/openapi.do
-
-이 API 는 검색어 파라미터가 없고 '기준년도' 전체 목록만 페이지로 내려준다.
-→ 처음 한 번 전체를 받아서 메모리에 두고, 검색은 서버 안에서 한다.
-"""
-
 import asyncio
+import json
 import logging
 import os
 import time
@@ -27,6 +20,9 @@ log = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 RETRY_AFTER_SECONDS = 60
+CONCURRENCY = 5
+CACHE_FILE = Path(__file__).resolve().parents[2] / "data" / "brand_cache.json"
+CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 _brands: list[dict] | None = None
 _lock = asyncio.Lock()
@@ -69,29 +65,61 @@ def _to_brand(item: dict) -> dict | None:
     }
 
 
+async def _fetch_page(client: httpx.AsyncClient, year: int, page: int) -> tuple[list[dict], int]:
+    res = await client.get(BRAND_URL, params={
+        "serviceKey": BRAND_API_KEY,
+        "pageNo": page,
+        "numOfRows": PAGE_SIZE,
+        "resultType": "json",
+        "jngBizCrtraYr": year,
+    })
+    res.raise_for_status()
+    return _extract_items(res.json())
+
+
 async def _fetch_year(client: httpx.AsyncClient, year: int) -> list[dict]:
+    first_items, total = await _fetch_page(client, year, 1)
+    if not first_items:
+        return []
+
+    last_page = min(MAX_PAGES, -(-total // PAGE_SIZE))
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+
+    async def fetch(page: int) -> list[dict]:
+        async with semaphore:
+            items, _ = await _fetch_page(client, year, page)
+            return items
+
+    rest = await asyncio.gather(*(fetch(page) for page in range(2, last_page + 1)))
+
     brands: dict[str, dict] = {}
-    for page in range(1, MAX_PAGES + 1):
-        res = await client.get(BRAND_URL, params={
-            "serviceKey": BRAND_API_KEY,
-            "pageNo": page,
-            "numOfRows": PAGE_SIZE,
-            "resultType": "json",
-            "jngBizCrtraYr": year,
-        })
-        res.raise_for_status()
-        items, total = _extract_items(res.json())
+    for items in [first_items, *rest]:
         for item in items:
             brand = _to_brand(item)
             if brand:
                 brands.setdefault(brand["name"], brand)
-        if not items or page * PAGE_SIZE >= total:
-            break
     return list(brands.values())
 
 
+def _read_cache() -> list[dict] | None:
+    try:
+        if time.time() - CACHE_FILE.stat().st_mtime > CACHE_MAX_AGE_SECONDS:
+            return None
+        brands = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        return brands if isinstance(brands, list) and brands else None
+    except (OSError, ValueError):
+        return None
+
+
+def _write_cache(brands: list[dict]) -> None:
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(json.dumps(brands, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        log.warning("가맹 브랜드 캐시 저장 실패: %s", e)
+
+
 def _safe_message(e: Exception) -> str:
-    # 응답 메시지에 serviceKey(인증키)가 담긴 URL 이 절대 나가지 않도록 직접 만든 문구만 사용
     if isinstance(e, httpx.HTTPStatusError):
         code = e.response.status_code
         if code in (401, 403):
@@ -112,6 +140,11 @@ async def load_brands() -> list[dict]:
     async with _lock:
         if _brands is not None:
             return _brands
+        cached = _read_cache()
+        if cached:
+            _brands = cached
+            log.info("가맹 브랜드 %d개 로드 (캐시 파일)", len(cached))
+            return _brands
         if _last_error and time.monotonic() - _last_error[0] < RETRY_AFTER_SECONDS:
             raise BrandApiError(_last_error[1])
         if not BRAND_API_KEY:
@@ -124,6 +157,7 @@ async def load_brands() -> list[dict]:
                     brands = await _fetch_year(client, year)
                     if brands:
                         _brands = brands
+                        _write_cache(brands)
                         _last_error = None
                         log.info("가맹 브랜드 %d개 로드 (%d년 기준)", len(brands), year)
                         return _brands
@@ -133,3 +167,10 @@ async def load_brands() -> list[dict]:
             log.warning("가맹 브랜드 로드 실패: %s", message)
             _last_error = (time.monotonic(), message)
             raise BrandApiError(message) from None
+
+
+async def preload_brands() -> None:
+    try:
+        await load_brands()
+    except BrandApiError:
+        pass

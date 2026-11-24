@@ -101,3 +101,6 @@ temp/
 
 # 가상환경
 environment.yaml
+
+# Cache
+src/app/data/brand_cache.json
