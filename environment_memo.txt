@@ -45,4 +45,6 @@ dependencies:
         - psycopg[binary]
         - google-genai==3.6.1
         - langchain-google-genai==4.5.2
-        
+        - langchain-community
+        - pypdf
+        - docx2txt
