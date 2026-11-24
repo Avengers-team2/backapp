@@ -35,14 +35,16 @@ def get_tokens(request: Request) -> JwtTokenDTO:
     access_token = request.cookies.get("access_token")
     refresh_token = request.cookies.get("refresh_token")
 
-    if not access_token:
+    # access_token은 만료되면 쿠키에서 사라질 수 있으므로(재발급 요청 시)
+    # Refresh Token이 없을 때만 오류 발생
+    if not refresh_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="get_tokens 로그인 세션이 만료되었습니다."
+            detail="Refresh Token이 없습니다."
         )
 
     return JwtTokenDTO(
-        access_token=access_token,
+        access_token=access_token or "",
         refresh_token=refresh_token
     )
 
