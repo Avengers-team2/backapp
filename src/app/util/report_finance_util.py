@@ -4,6 +4,7 @@ from app.schema.report_ai_schema import (
     FinanceRaw,
     ItemGrade,
     ItemReview,
+    Suggestion,
 )
 
 # ─────────────────────────────────────────
@@ -256,3 +257,27 @@ def calc_total_score(items: list[ItemReview]) -> int:
         total += (weight * item.score / 5)
 
     return round(total)
+
+
+# 재무 검산 결과를 개선 제안으로 바꾸기
+# LLM은 계산을 안 하니까 수치 오류를 모름 → 백엔드가 직접 제안을 만들어 앞에 붙인다
+def build_finance_suggestions(checks: list[FinanceCheck]) -> list[Suggestion]:
+    suggestions = []
+
+    for check in checks:
+        # 원문 수치가 계산과 다르면 신뢰도에 직접 영향 → 높음
+        if check.result == "불일치":
+            suggestions.append(Suggestion(
+                priority="높음",
+                problem=f"{check.label} 수치 오류 (원문: {check.original})",
+                action=f"검산 결과({check.formula})와 맞지 않습니다. 원문 수치를 다시 계산해 고치거나, 빠진 항목을 표에 추가해 맞추세요.",
+            ))
+        # 손익분기점은 원문에 없으면 항상 근거 누락 → 보통
+        elif check.label == "손익분기점" and check.result == "근거 누락":
+            suggestions.append(Suggestion(
+                priority="보통",
+                problem="손익분기점 미제시",
+                action="고정비와 재료비 비율로 손익분기 월 매출과 하루에 필요한 고객 수를 계산해 넣으세요.",
+            ))
+
+    return suggestions
