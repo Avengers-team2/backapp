@@ -13,6 +13,7 @@ class LoginRequestDTO(BaseModel):
 
 class SocialLoginRequestDTO(BaseModel):
     user_email: str
+    user_name: str | None = None  # 소셜 프로필 이름 (동의 항목이 없으면 None)
     user_provider_id: str | None = None
     user_provider: UserProvider | None = None
 

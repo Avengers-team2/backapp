@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
-from sqlalchemy import BigInteger, Date, String, Text, Enum, DateTime, Identity, UniqueConstraint, Integer
+from sqlalchemy import BigInteger, Boolean, Date, String, Text, Enum, DateTime, Identity, UniqueConstraint, Integer, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.enum.user_enum import UserProvider
 from app.model.post_model import Post
@@ -39,6 +39,11 @@ class User(Base):
 
     user_interest_region: Mapped[str | None] = mapped_column(String(100))
     user_interest_industry: Mapped[str | None] = mapped_column(String(100))
+
+    # 약관 동의 (회원가입 폼의 agree_terms / agree_privacy / agree_marketing)
+    user_agree_terms: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())          # 서비스 이용약관 (필수)
+    user_agree_privacy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())        # 개인정보 수집·이용 (필수)
+    user_agree_marketing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())      # 지원사업 마감 알림 (선택)
 
     __table_args__ = (
         UniqueConstraint("user_email", "user_provider", name="uq_users_email_provider"),
