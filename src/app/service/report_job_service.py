@@ -3,6 +3,7 @@ import hashlib
 import io
 import os
 import traceback
+import unicodedata
 import uuid
 from datetime import datetime
 
@@ -37,7 +38,8 @@ class ReportJobService:
 
     # 1. 기획서 업로드 → S3 저장 → report_job 생성 (status: PENDING)
     async def upload(self, user_id: int, file: UploadFile) -> ReportJobResponseDTO:
-        file_name = os.path.basename(file.filename or "")
+        # Mac에서 올린 한글 파일 이름(자모가 쪼개진 NFD)을 일반 형태(NFC)로 맞춘다.
+        file_name = unicodedata.normalize("NFC", os.path.basename(file.filename or ""))
         file_type = os.path.splitext(file_name)[1].lower().lstrip(".")   # "카페.PDF" → "pdf"
 
         if file_type not in ALLOWED_FILE_TYPES:
@@ -188,7 +190,7 @@ async def run_report_review(report_job_id: int, s3_service: S3Service) -> None:
                 Body=pdf_bytes,
                 ContentType="application/pdf",
             )
-            await export_repo.create_export(report_job_id, export_key)
+            await export_repo.create_export(report_job_id, export_key, result.model_dump(mode="json"))
 
             await repo.update_status(report_job_id, ReportStatus.COMPLETED)
 
