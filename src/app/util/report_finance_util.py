@@ -7,9 +7,6 @@ from app.schema.report_ai_schema import (
     Suggestion,
 )
 
-# ─────────────────────────────────────────
-# 설정값
-# ─────────────────────────────────────────
 
 # 1. 일치로 볼 허용 오차 (원문은 "약 670만 원"처럼 반올림이 많음)
 TOLERANCE_RATE = 0.01    # 1% 이내면 일치
@@ -26,7 +23,6 @@ ITEM_WEIGHTS = {
     "operation_plan": 15,
     "risk_management": 10,
 }
-
 
 
 def sum_items(items: list[CostItem]) -> int | None:
@@ -268,6 +264,29 @@ def calc_total_score(items: list[ItemReview]) -> int:
     return round(total)
 
 
+# 종합 점수 → 종합 등급 (80 이상 우수 / 60~79 보통 / 40~59 미흡 / 40 미만 매우 미흡)
+def total_to_grade(total_score: int) -> str:
+    if total_score >= 80:
+        return "우수"
+    elif total_score >= 60:
+        return "보통"
+    elif total_score >= 40:
+        return "미흡"
+    else:
+        return "매우 미흡"
+
+
+PROFIT_ITEM_KEY = "business_model_profit"
+PROFIT_MAX_SCORE_WHEN_MISMATCH = 3
+
+def cap_profit_score(items: list[ItemReview], checks: list[FinanceCheck]) -> None:
+    if not any(check.result == "불일치" for check in checks):
+        return
+    for item in items:
+        if item.item_key == PROFIT_ITEM_KEY and item.score > PROFIT_MAX_SCORE_WHEN_MISMATCH:
+            item.score = PROFIT_MAX_SCORE_WHEN_MISMATCH
+
+
 # 검산 항목(label)별 개선 방법 문구
 FINANCE_ACTIONS = {
     "창업 비용 합계": "세부 항목의 합과 적힌 합계가 다릅니다. 빠진 비용 항목이 있으면 표에 추가하고, 없으면 합계를 고쳐 적으세요.",
@@ -280,8 +299,6 @@ FINANCE_ACTIONS = {
 DEFAULT_FINANCE_ACTION = "원문 수치를 다시 계산해 고쳐 적으세요."
 
 
-# 재무 검산 결과를 개선 제안으로 바꾸기
-# LLM은 계산을 안 하니까 수치 오류를 모름 → 백엔드가 직접 제안을 만들어 앞에 붙인다
 def build_finance_suggestions(checks: list[FinanceCheck]) -> list[Suggestion]:
     suggestions = []
 
