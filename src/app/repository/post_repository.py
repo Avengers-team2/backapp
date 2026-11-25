@@ -27,7 +27,7 @@ class PostRepository:
         query = (
             insert(Post)
             .values(
-                **post.model_dump(),
+                **post.model_dump(exclude={"post_image_urls"}),   # 사진은 post_image 테이블에 따로 저장
                 user_id=user_id
             )
             .returning(

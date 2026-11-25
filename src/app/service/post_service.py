@@ -9,16 +9,20 @@ from app.schema.user_schema import UserSummaryDTO
 from app.repository.post_like_repository import PostLikeRepository, get_post_like_repository
 from app.repository.post_bookmark_repository import PostBookmarkRepository, get_post_bookmark_repository
 from app.schema.post_bookmark_schema import PostBookmarkStatusResponseDTO
+from app.service.post_image_service import PostImageService, get_post_image_service
 
 
 class PostService:
-    def __init__(self, post_repo: PostRepository, like_repo: PostLikeRepository, bookmark_repo: PostBookmarkRepository):
+    def __init__(self, post_repo: PostRepository, like_repo: PostLikeRepository, bookmark_repo: PostBookmarkRepository,
+                 image_service: PostImageService):
         self.post_repo = post_repo
         self.like_repo = like_repo
         self.bookmark_repo = bookmark_repo
+        self.image_service = image_service
 
     async def create_post(self, user_id: int, post: PostCreateDTO) -> int:
         new_post_id = await self.post_repo.create_post(user_id, post)
+        await self.image_service.save_images(new_post_id, post.post_image_urls)
         return new_post_id
 
 
@@ -91,7 +95,7 @@ class PostService:
             post_category=post.post_category,
             post_title=post.post_title,
             post_content=post.post_content,
-            post_image_url=post.post_image_url,
+            images=await self.image_service.get_images(post_id),
             post_view_count=view_count,
             post_like_count=post.post_like_count,
             post_created_at=post.post_created_at,
@@ -108,12 +112,13 @@ class PostService:
     async def update_post(self, post_id: int, user_id: int, update_dto: PostUpdateDTO) -> int:
         await _get_owned_post(self.post_repo, post_id, user_id, "본인 글만 수정할 수 있습니다")
 
-        update_data = update_dto.model_dump()
+        update_data = update_dto.model_dump(exclude={"post_image_urls"})   # 사진은 post_image 테이블에 따로 저장
         updated_id = await self.post_repo.update_post(post_id, update_data)
 
         if updated_id is None:
             raise _post_not_found_error()
 
+        await self.image_service.replace_images(post_id, update_dto.post_image_urls)
         return updated_id
 
     async def delete_post(self, post_id: int, user_id: int) -> bool:
@@ -207,9 +212,10 @@ class PostService:
 def get_post_service(
         post_repository: PostRepository = Depends(get_post_repository),
         like_repository: PostLikeRepository = Depends(get_post_like_repository),
-        bookmark_repository: PostBookmarkRepository = Depends(get_post_bookmark_repository)
+        bookmark_repository: PostBookmarkRepository = Depends(get_post_bookmark_repository),
+        image_service: PostImageService = Depends(get_post_image_service)
     ):
-    return PostService(post_repository, like_repository, bookmark_repository)
+    return PostService(post_repository, like_repository, bookmark_repository, image_service)
 
 
 # ===== 공통 함수 =====
