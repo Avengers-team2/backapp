@@ -14,6 +14,9 @@ from app.schema.report_ai_schema import (
 # 1. 일치로 볼 허용 오차 (원문은 "약 670만 원"처럼 반올림이 많음)
 TOLERANCE_RATE = 0.01    # 1% 이내면 일치
 
+# 1-1. 투자금 회수 기간 허용 오차 (원문은 "약 8개월"처럼 반올림이 많아 1%로는 너무 엄격함)
+PAYBACK_TOLERANCE_MONTHS = 0.5    # 0.5개월 차이까지 일치
+
 # . 항목별 배점 (예시 PDF 기준 가안, 합계 100)
 ITEM_WEIGHTS = {
     "item_differentiation": 20,
@@ -113,8 +116,8 @@ def check_funding(f: FinanceRaw) -> FinanceCheck:
     elif gap < 0:
         formula += f" (비용 합계보다 {to_manwon(-gap)} 부족)"
 
-    # 쓸 돈 기준으로 모은 돈이 맞는지 판정
-    result = "일치" if is_match(cost, fund) else "불일치"
+    # 모은 돈이 쓸 돈보다 모자랄 때만 불일치 (남는 돈은 운전자금·예비비라 오류가 아님)
+    result = "일치" if (fund >= cost or is_match(cost, fund)) else "불일치"
 
     return FinanceCheck(label=label, original=original, formula=formula, result=result)
 
@@ -208,7 +211,7 @@ def check_payback(f: FinanceRaw) -> FinanceCheck:
     calc = round(cost / profit, 1)
     formula = f"{to_manwon(cost)} ÷ {to_manwon(profit)} = 약 {to_months(calc)}개월"
 
-    if is_match(original, calc) == True:
+    if abs(original - calc) <= PAYBACK_TOLERANCE_MONTHS:
         result = "일치"
     else:
         result = "불일치"
