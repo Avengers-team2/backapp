@@ -4,7 +4,7 @@ from app.infrastructure.llm import get_llm
 from app.schema.report_ai_schema import ItemKey, ReportAiLlmOutput, ReportAiResult
 from app.util.report_finance_util import build_finance_checks, build_finance_suggestions, build_grades, calc_total_score
 
-PROMPT = "v3.2"
+PROMPT = "v3.3"
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "data" / "startfit_review_prompt.md"
 ITEM_KEY_ORDER = get_args(ItemKey)   # 스키마에 정의된 6개 항목 key 순서 (①~⑥)
 PRIORITY_ORDER = {"높음": 0, "보통": 1, "낮음": 2}
