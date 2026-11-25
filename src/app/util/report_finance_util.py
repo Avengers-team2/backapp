@@ -116,8 +116,8 @@ def check_funding(f: FinanceRaw) -> FinanceCheck:
     elif gap < 0:
         formula += f" (비용 합계보다 {to_manwon(-gap)} 부족)"
 
-    # 쓸 돈 기준으로 모은 돈이 맞는지 판정
-    result = "일치" if is_match(cost, fund) else "불일치"
+    # 모은 돈이 쓸 돈보다 모자랄 때만 불일치 (남는 돈은 운전자금·예비비라 오류가 아님)
+    result = "일치" if (fund >= cost or is_match(cost, fund)) else "불일치"
 
     return FinanceCheck(label=label, original=original, formula=formula, result=result)
 
