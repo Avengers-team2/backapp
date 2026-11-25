@@ -7,6 +7,8 @@ import html
 import re
 from datetime import date, datetime
 
+from app.enum.support_enum import CategoryGroupEnum
+
 # 시·도 약칭 ← 응답에 나올 수 있는 표기들
 REGION_ALIASES: dict[str, list[str]] = {
     "서울": ["서울", "서울특별시", "서울시"],
@@ -30,6 +32,46 @@ REGION_ALIASES: dict[str, list[str]] = {
 _ALIAS_TO_REGION = {alias: region for region, aliases in REGION_ALIASES.items() for alias in aliases}
 _ALIAS_TO_REGION["전남광주"] = "전남"  # 기업마당 해시태그 표기 (아래 to_regions 에서 광주도 추가)
 NATIONWIDE = "전국"
+
+
+# 공고 분류(category) → 공통 그룹. K-Startup(supt_biz_clsfc) / 기업마당(pldirSportRealmLclasCodeNm) 값
+_CATEGORY_TO_GROUP: dict[str, CategoryGroupEnum] = {
+    "정책자금": CategoryGroupEnum.FUNDING,
+    "금융": CategoryGroupEnum.FUNDING,
+    "사업화": CategoryGroupEnum.BUSINESS,
+    "창업": CategoryGroupEnum.BUSINESS,
+    "멘토링컨설팅교육": CategoryGroupEnum.EDUCATION,
+    "창업교육": CategoryGroupEnum.EDUCATION,
+    "경영": CategoryGroupEnum.EDUCATION,
+    "시설공간보육": CategoryGroupEnum.FACILITY,
+    "행사네트워크": CategoryGroupEnum.EVENT,
+    "글로벌": CategoryGroupEnum.MARKET,
+    "판로해외진출": CategoryGroupEnum.MARKET,
+    "수출": CategoryGroupEnum.MARKET,
+    "내수": CategoryGroupEnum.MARKET,
+    "기술": CategoryGroupEnum.TECH_HR,
+    "인력": CategoryGroupEnum.TECH_HR,
+}
+
+# 그룹별 표시 정보. icon 은 lucide 아이콘 이름, color 는 대표색(hex)
+CATEGORY_GROUP_STYLE: dict[CategoryGroupEnum, dict[str, str]] = {
+    CategoryGroupEnum.FUNDING:   {"label": "자금",        "icon": "wallet",         "color": "#16A34A"},
+    CategoryGroupEnum.BUSINESS:  {"label": "사업화",      "icon": "rocket",         "color": "#2563EB"},
+    CategoryGroupEnum.EDUCATION: {"label": "교육·멘토링", "icon": "graduation-cap", "color": "#7C3AED"},
+    CategoryGroupEnum.FACILITY:  {"label": "공간·시설",   "icon": "building",       "color": "#EA580C"},
+    CategoryGroupEnum.EVENT:     {"label": "행사·네트워크", "icon": "users",        "color": "#DB2777"},
+    CategoryGroupEnum.MARKET:    {"label": "판로·수출",   "icon": "globe",          "color": "#0D9488"},
+    CategoryGroupEnum.TECH_HR:   {"label": "기술·인력",   "icon": "cpu",            "color": "#4338CA"},
+    CategoryGroupEnum.ETC:       {"label": "기타",        "icon": "file-text",      "color": "#6B7280"},
+}
+
+
+def to_category_group(category: str | None) -> CategoryGroupEnum:
+    """'멘토링ㆍ컨설팅ㆍ교육' 같은 분류명 → 공통 그룹. 모르는 값이면 ETC"""
+    if not category:
+        return CategoryGroupEnum.ETC
+    key = re.sub(r"[\sㆍ·,/]+", "", category)  # 구분자 표기 차이(ㆍ · 공백) 무시
+    return _CATEGORY_TO_GROUP.get(key, CategoryGroupEnum.ETC)
 
 
 def split_csv(value: str | None) -> list[str]:
