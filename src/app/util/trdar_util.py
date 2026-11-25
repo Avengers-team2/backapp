@@ -64,6 +64,10 @@ def search_trdar(keyword: str, limit: int = 8) -> list[dict]:
     return (starts + contains)[:limit]
 
 
+def find_trdar(code: str) -> dict | None:
+    return next((a for a in load_trdar_list() if a["code"] == code), None)
+
+
 def exists_trdar(code: str) -> bool:
     areas = load_trdar_list()
     if not areas:
