@@ -8,6 +8,7 @@ class ReportExportVO(BaseModel):
     report_job_id: int
     export_file_path: str
     export_created_at: datetime | None = None
+    export_result_json: dict | None = None
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 

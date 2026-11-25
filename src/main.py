@@ -8,6 +8,7 @@ from app.infrastructure.redis import start_redis_client
 from app.infrastructure.s3 import start_s3_client
 import app.model
 from app.infrastructure.external.franchise_api import preload_brands
+from app.service.support_service import preload_programs
 
 from app.api import (
     user_api,
@@ -38,10 +39,12 @@ async def lifespan(app: FastAPI):
             print("S3 연결 성공!")
 
             brand_task = asyncio.create_task(preload_brands())
+            support_task = asyncio.create_task(preload_programs())
 
             # 4. 전이학습 모델 로드
             yield
             brand_task.cancel()
+            support_task.cancel()
 
 app = FastAPI(
     lifespan=lifespan,
