@@ -11,6 +11,7 @@ KST = timezone(timedelta(hours=9))
 if TYPE_CHECKING:
     from app.model.user_model import User
     from app.model.post_comment_model import PostComment
+    from app.model.post_image_model import PostImage
 
 
 class Post(Base):
@@ -21,7 +22,6 @@ class Post(Base):
     post_category: Mapped[str] = mapped_column(String(20), nullable=False)
     post_title: Mapped[str] = mapped_column(String(200), nullable=False)
     post_content: Mapped[str] = mapped_column(Text, nullable=False)
-    post_image_url: Mapped[str | None] = mapped_column(String(500))
     post_created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(KST)
     )
@@ -33,3 +33,4 @@ class Post(Base):
     # 관계
     user: Mapped["User"] = relationship("User", back_populates="posts")
     comments: Mapped[list["PostComment"]] = relationship("PostComment", back_populates="post")
+    images: Mapped[list["PostImage"]] = relationship("PostImage", order_by="PostImage.image_sort_order")
