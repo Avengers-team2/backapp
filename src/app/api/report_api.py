@@ -65,7 +65,7 @@ async def start_report_job(
     report_job_service: ReportJobService = Depends(get_report_job_service)
 ):
     job = await report_job_service.start(user_claims.user_id, report_job_id)
-    background_tasks.add_task(run_report_review, report_job_id)
+    background_tasks.add_task(run_report_review, report_job_id, report_job_service.s3_service)
 
     return ApiResponseDTO(
         success=True,
@@ -127,7 +127,7 @@ async def retry_report_job(
     report_job_service: ReportJobService = Depends(get_report_job_service)
 ):
     job = await report_job_service.retry(user_claims.user_id, report_job_id)
-    background_tasks.add_task(run_report_review, report_job_id)
+    background_tasks.add_task(run_report_review, report_job_id, report_job_service.s3_service)
 
     return ApiResponseDTO(
         success=True,
@@ -173,3 +173,24 @@ async def retry_report_job(
 #         filename=file_name,
 #         media_type="application/pdf"
 #     )
+
+# 9. 검토 보고서 PDF 다운로드 링크 발급 (결과 화면의 'PDF 내려받기' 버튼, COMPLETED인 요청만 가능)
+from app.service.report_export_service import ReportExportService, get_report_export_service
+
+@router.get(
+    "/jobs/{report_job_id}/export",
+    summary="검토 보고서 PDF 다운로드 링크 발급",
+    response_model=ApiResponseDTO
+)
+async def get_report_export_url(
+    report_job_id: int,
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    report_export_service: ReportExportService = Depends(get_report_export_service)
+):
+    download = await report_export_service.get_download_url(user_claims.user_id, report_job_id)
+
+    return ApiResponseDTO(
+        success=True,
+        message="검토 보고서 다운로드 링크 발급 성공",
+        data=download
+    )
