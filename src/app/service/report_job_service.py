@@ -75,6 +75,18 @@ class ReportJobService:
         job = await self.report_job_repo.get_by_id(report_job_id)
         return ReportJobResponseDTO.model_validate(job)
 
+    # 2-1. 다시 검토하기 (FAILED → FILE_CHECK). 오류 화면의 '다시 검토하기' 버튼
+    async def retry(self, user_id: int, report_job_id: int) -> ReportJobResponseDTO:
+        job = await self._get_owned_job(user_id, report_job_id)
+
+        if job.report_job_status != ReportStatus.FAILED:
+            raise HTTPException(status.HTTP_409_CONFLICT, "실패한 검토만 다시 시도할 수 있습니다.")
+
+        await self.report_job_repo.reset_for_retry(report_job_id)
+
+        job = await self.report_job_repo.get_by_id(report_job_id)
+        return ReportJobResponseDTO.model_validate(job)
+
     # 3. 검토 상태 조회 (진행 모달이 2~3초마다 호출)
     async def get_job(self, user_id: int, report_job_id: int) -> ReportJobResponseDTO:
         job = await self._get_owned_job(user_id, report_job_id)
