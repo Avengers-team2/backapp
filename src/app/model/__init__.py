@@ -4,6 +4,7 @@ from .default_model import Default
 from .payment_model import Payment
 from .post_bookmark_model import PostBookmark
 from .post_comment_model import PostComment
+from .post_image_model import PostImage
 from .post_like_model import PostLike
 from .post_model import Post
 from .report_export_model import ReportExport
