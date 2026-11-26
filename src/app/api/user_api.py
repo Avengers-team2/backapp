@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Query, Depends, HTTPException
+from fastapi import APIRouter, Query, Depends, HTTPException, UploadFile, File, Form
 from app.service.user_service import get_user_service, UserService
+from app.service.s3_service import get_s3_service, S3Service
 from app.schema.user_schema import (
     UserCreateDTO, UserClaimDTO, UserUpdateDTO
 )
+from app.schema.s3_schema import ImageUploadResponseDTO, FileUploadResponseDTO
+from app.enum.s3_enum import S3Folder
 from app.schema.common_schema import ApiResponseDTO
 from app.dependencie.auth_dependency import get_current_user
 
@@ -175,4 +178,40 @@ async def withdraw(
     return ApiResponseDTO(
         success=True,
         message="회원 탈퇴 완료"
+    )
+
+
+@router.put(
+    "/{user_id}/profile",
+    summary="프로필 사진",
+    response_model=ApiResponseDTO
+)
+async def update_profile(
+    user_id: int, 
+    file: UploadFile = File(...),
+    folder: S3Folder = Form(...),
+    s3_service: S3Service = Depends(get_s3_service),
+    user_service: UserService = Depends(get_user_service),
+    current_user: UserClaimDTO = Depends(get_current_user)
+):
+    if current_user.user_id != user_id:
+        raise HTTPException(status_code=403, detail="본인 프로필만 수정할 수 있습니다.")
+    
+    
+    result: ImageUploadResponseDTO = await s3_service.upload_image_with_thumbnail(
+        file=file,
+        folder=folder.value
+    )
+
+    original_url = result.original_url
+    user_update_dto = UserUpdateDTO(
+        user_profile=original_url
+    )
+    
+    updated_user = await user_service.update_user(user_id, user_update_dto)
+
+    return ApiResponseDTO(
+        success=True,
+        message="프로필 수정 완료",
+        data=updated_user
     )

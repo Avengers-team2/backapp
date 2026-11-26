@@ -26,6 +26,7 @@ class User(Base):
     user_nickname: Mapped[str | None] = mapped_column(Text)
     user_birth: Mapped[date] = mapped_column(Date, nullable=False)
     user_phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    user_profile: Mapped[str | None] = mapped_column(Text, default="/users/default.jpg")
 
     user_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     user_deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
