@@ -21,7 +21,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 RETRY_AFTER_SECONDS = 60
 CONCURRENCY = 5
-CACHE_FILE = Path(__file__).resolve().parents[2] / "data" / "brand_cache.json"
+CACHE_FILE = Path(__file__).resolve().parents[2] / "data" / "analysis_input" / "brand_cache.json"
 CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 _brands: list[dict] | None = None
