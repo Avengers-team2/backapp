@@ -54,6 +54,31 @@ class AreaSearchResponseDTO(BaseModel):
     name: str
     gu: str
     dong: str
+    # 지도 이동용 중심 좌표 (폴리곤 파일이 없으면 None)
+    center_lat: float | None = None
+    center_lng: float | None = None
+    # 매출 데이터가 있는 상권인지. False 면 점수 없이 정보판만 나간다 (모델을 못 불러오면 None)
+    has_sales_data: bool | None = None
+
+
+class AreaPolygonResponseDTO(BaseModel):
+    code: str
+    name: str
+    type_name: str
+    gu: str
+    dong: str
+    area_m2: int
+    center_lat: float
+    center_lng: float
+    distance_m: int  # 검색 좌표에서 상권 경계까지 거리(m). 상권 안이면 0
+    geometry: dict   # 표준 GeoJSON Polygon / MultiPolygon, 좌표 순서는 [경도, 위도]
+    # 카카오지도용: [폴리곤][고리][점{lat, lng}]. 고리의 첫 번째는 바깥 경계, 나머지는 구멍
+    kakao_polygons: list[list[list[dict[str, float]]]]
+
+
+class AreaLocateResponseDTO(BaseModel):
+    matched: str  # inside(상권 안) / nearby(근처 상권) / none(없음)
+    items: list[AreaPolygonResponseDTO]
 
 
 class BrandSearchResponseDTO(BaseModel):

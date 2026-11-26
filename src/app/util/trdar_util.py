@@ -1,13 +1,13 @@
 """
 서울시 상권분석서비스(영역-상권) CSV 를 읽어서 상권 검색에 쓴다.
-파일: app/data/seoul_trdar.csv  (서울 열린데이터광장 OA-15560 에서 CSV 내려받기)
+파일: app/data/analysis_input/seoul_trdar.csv  (서울 열린데이터광장 OA-15560 에서 CSV 내려받기)
 """
 
 import csv
 from functools import lru_cache
 from pathlib import Path
 
-TRDAR_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "seoul_trdar.csv"
+TRDAR_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "analysis_input" / "seoul_trdar.csv"
 
 COL_CODE = "상권_코드"
 COL_NAME = "상권_코드_명"

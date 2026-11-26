@@ -103,4 +103,13 @@ temp/
 environment.yaml
 
 # Cache
-src/app/data/brand_cache.json
+src/app/data/analysis_input/brand_cache.json
+
+# ML 모델 가중치/피처 (용량 큼, 커밋 금지)
+src/app/weight/
+src/app/data/analysis/*.pth
+src/app/data/analysis/*.csv
+src/app/data/analysis_back/
+# 모델 파일은 어느 폴더에 있든 커밋하지 않음
+*.pth
+src/app/data/store_cache/

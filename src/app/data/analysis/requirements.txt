@@ -1,0 +1,4 @@
+pandas>=2.2
+numpy>=1.26
+xgboost>=3.0
+pydantic>=2.8

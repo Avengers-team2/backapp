@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, Request, Response, HTTPException
+from fastapi import APIRouter, Depends, Query, Request, Response, HTTPException
 from app.schema.common_schema import ApiResponseDTO
 from app.schema.user_schema import UserClaimDTO
 from app.enum.user_enum import UserProvider
@@ -24,6 +24,50 @@ FRONT_END_URL = os.getenv("FRONT_END_URL")
 # 소셜 가입용 쿠키 이름 / 유효시간(10분)
 SOCIAL_JOIN_COOKIE = "social_join_token"
 SOCIAL_JOIN_COOKIE_MAX_AGE = 60 * 10
+
+# 소셜 로그인 후 되돌아갈 프론트 경로를 잠깐 보관하는 쿠키 / 유효시간(10분)
+LOGIN_REDIRECT_COOKIE = "login_redirect_path"
+LOGIN_REDIRECT_COOKIE_MAX_AGE = 60 * 10
+LOGIN_REDIRECT_MAX_LENGTH = 500
+# 로그인 후에 다시 로그인/가입 화면으로 돌아가면 반복되므로 제외
+LOGIN_REDIRECT_BLOCKED_PREFIXES = ("/login", "/join", "/find-account")
+
+
+# 되돌아갈 경로 검사: 우리 사이트 안의 경로만 허용 (다른 사이트로 보내는 오픈 리다이렉트 방지)
+#   OK : /analysis, /analysis?area=3120197#result
+#   NO : https://evil.com, //evil.com, /\evil.com, 제어문자 포함, 너무 긴 값, /login
+def _safe_redirect_path(path: str | None) -> str | None:
+    if not path or len(path) > LOGIN_REDIRECT_MAX_LENGTH:
+        return None
+    if not path.startswith("/") or path.startswith("//"):
+        return None
+    if "\\" in path or any(ord(ch) < 32 or ord(ch) == 127 for ch in path):
+        return None
+    only_path = path.split("?")[0].split("#")[0]
+    if any(only_path == p or only_path.startswith(f"{p}/") for p in LOGIN_REDIRECT_BLOCKED_PREFIXES):
+        return None  # /login, /join, /find-account 와 그 하위 (/loginx 같은 다른 경로는 허용)
+    return path
+
+
+# 소셜 로그인 시작 때 호출: 안전한 경로면 쿠키에 저장, 아니면 이전 값을 지움
+def _remember_redirect_path(response: Response, redirect: str | None) -> None:
+    safe_path = _safe_redirect_path(redirect)
+    if safe_path is None:
+        response.delete_cookie(LOGIN_REDIRECT_COOKIE)
+        return
+    response.set_cookie(
+        key=LOGIN_REDIRECT_COOKIE,
+        value=safe_path,
+        httponly=True,
+        secure=False,
+        samesite="lax",  # 소셜 사이트에서 돌아오는 이동(GET)에는 lax 쿠키도 같이 전달된다
+        max_age=LOGIN_REDIRECT_COOKIE_MAX_AGE
+    )
+
+
+# 쿠키 값은 다시 검사해서 사용 (쿠키는 사용자가 바꿀 수 있으므로)
+def _read_redirect_path(request: Request) -> str | None:
+    return _safe_redirect_path(request.cookies.get(LOGIN_REDIRECT_COOKIE))
 
 
 # 쿠키에 토큰 저장 (로그인/소셜로그인 공통)
@@ -174,7 +218,10 @@ GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
     "/google",
     summary="구글 로그인"
 )
-async def google_login():
+async def google_login(
+    next: str | None = Query(None, description="로그인 후 돌아갈 프론트 경로 (예: /analysis?area=1). 프론트 /login?next= 와 같은 이름"),
+    redirect: str | None = Query(None, description="next 의 옛 이름 (둘 다 오면 next 우선)")
+):
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_REDIRECT_URI,
@@ -185,7 +232,9 @@ async def google_login():
     }
 
     url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
-    return RedirectResponse(url)
+    response = RedirectResponse(url)
+    _remember_redirect_path(response, next or redirect)
+    return response
 
 
 # /auth/google/callback
@@ -195,6 +244,7 @@ async def google_login():
 )
 async def google_login_callback(
     code: str,
+    request: Request,
     auth_service: AuthService = Depends(get_auth_service)
 ):
     async with httpx.AsyncClient() as client:
@@ -228,7 +278,7 @@ async def google_login_callback(
         "user_provider_id": user.get("sub")
     }
 
-    return await _handle_social_login(user_params, auth_service)
+    return await _handle_social_login(user_params, auth_service, request)
 
 
 # ---------------- 카카오 로그인 ----------------
@@ -241,7 +291,10 @@ KAKAO_USERINFO_URL = os.getenv("KAKAO_USERINFO_URL")
 
 
 @router.get("/kakao", summary="카카오 로그인 리다이렉트")
-async def kakao_login():
+async def kakao_login(
+    next: str | None = Query(None, description="로그인 후 돌아갈 프론트 경로 (예: /analysis?area=1). 프론트 /login?next= 와 같은 이름"),
+    redirect: str | None = Query(None, description="next 의 옛 이름 (둘 다 오면 next 우선)")
+):
     params = {
         "client_id": KAKAO_CLIENT_ID,
         "redirect_uri": KAKAO_REDIRECT_URI,
@@ -249,12 +302,15 @@ async def kakao_login():
     }
 
     url = f"{KAKAO_AUTH_URL}?{urlencode(params)}"
-    return RedirectResponse(url)
+    response = RedirectResponse(url)
+    _remember_redirect_path(response, next or redirect)
+    return response
 
 
 @router.get("/kakao/callback", summary="카카오 로그인 콜백")
 async def kakao_login_callback(
     code: str,
+    request: Request,
     auth_service: AuthService = Depends(get_auth_service)
 ):
     async with httpx.AsyncClient() as client:
@@ -294,7 +350,7 @@ async def kakao_login_callback(
         "user_provider_id": user_provider_id
     }
 
-    return await _handle_social_login(user_params, auth_service)
+    return await _handle_social_login(user_params, auth_service, request)
 
 
 # ---------------- 네이버 로그인 ----------------
@@ -307,7 +363,10 @@ NAVER_USERINFO_URL = os.getenv("NAVER_USERINFO_URL")
 
 
 @router.get("/naver", summary="네이버 로그인 리다이렉트")
-async def naver_login():
+async def naver_login(
+    next: str | None = Query(None, description="로그인 후 돌아갈 프론트 경로 (예: /analysis?area=1). 프론트 /login?next= 와 같은 이름"),
+    redirect: str | None = Query(None, description="next 의 옛 이름 (둘 다 오면 next 우선)")
+):
     params = {
         "client_id": NAVER_CLIENT_ID,
         "redirect_uri": NAVER_REDIRECT_URI,
@@ -315,12 +374,15 @@ async def naver_login():
     }
 
     url = f"{NAVER_AUTH_URL}?{urlencode(params)}"
-    return RedirectResponse(url)
+    response = RedirectResponse(url)
+    _remember_redirect_path(response, next or redirect)
+    return response
 
 
 @router.get("/naver/callback", summary="네이버 로그인 콜백")
 async def naver_login_callback(
     code: str,
+    request: Request,
     auth_service: AuthService = Depends(get_auth_service)
 ):
     async with httpx.AsyncClient() as client:
@@ -356,7 +418,7 @@ async def naver_login_callback(
         "user_provider_id": str(naver_user.get("id"))
     }
 
-    return await _handle_social_login(user_params, auth_service)
+    return await _handle_social_login(user_params, auth_service, request)
 
 
 # 로그아웃
@@ -422,8 +484,8 @@ async def refresh(
 
 # 소셜 로그인 공통 처리
 # - 비회원: 프론트 /join(소셜 가입 모드)으로 이동 -> 프론트가 /auth/join 호출
-# - 회원: 쿠키에 토큰 저장 후 프론트 메인으로 이동
-async def _handle_social_login(user_params: dict, auth_service: AuthService):
+# - 회원: 쿠키에 토큰 저장 후, 로그인 전에 보던 페이지(없으면 프론트 메인)로 이동
+async def _handle_social_login(user_params: dict, auth_service: AuthService, request: Request):
     social_user = SocialLoginRequestDTO.model_validate(user_params)
     tokens = await auth_service.social_login_or_none(social_user)
 
@@ -431,8 +493,13 @@ async def _handle_social_login(user_params: dict, auth_service: AuthService):
     if not tokens:
         # 값이 없는 항목(예: 이름 동의 안 함)은 쿼리에서 생략 -> 프론트가 직접 입력받음
         query = {key: value for key, value in user_params.items() if value}
+        # 가입을 마친 뒤 원래 페이지로 돌아갈 수 있게 next 를 같이 넘긴다 (검사를 통과한 경로만)
+        return_path = _read_redirect_path(request)
+        if return_path:
+            query["next"] = return_path
         url = f"{FRONT_END_URL}/join?{urlencode(query)}"
         redirect_response = RedirectResponse(url)
+        redirect_response.delete_cookie(LOGIN_REDIRECT_COOKIE)
 
         # 쿼리는 화면 표시용. 실제 가입 때는 이 쿠키 값만 신뢰한다.
         redirect_response.set_cookie(
@@ -445,8 +512,10 @@ async def _handle_social_login(user_params: dict, auth_service: AuthService):
         )
         return redirect_response
 
-    # 기존 회원
-    redirect_response = RedirectResponse(url=FRONT_END_URL)
+    # 기존 회원: 로그인 전에 보던 페이지로 (저장된 경로가 없거나 안전하지 않으면 메인)
+    return_path = _read_redirect_path(request) or ""
+    redirect_response = RedirectResponse(url=f"{FRONT_END_URL.rstrip('/')}{return_path}")
     _set_auth_cookies(redirect_response, tokens)
+    redirect_response.delete_cookie(LOGIN_REDIRECT_COOKIE)  # 한 번 쓰면 지움
 
     return redirect_response
