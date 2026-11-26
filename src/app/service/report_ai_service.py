@@ -2,7 +2,8 @@ from pathlib import Path
 from typing import get_args
 from app.infrastructure.llm import get_llm
 from app.schema.report_ai_schema import ItemKey, ReportAiLlmOutput, ReportAiResult
-from app.util.report_finance_util import build_finance_checks, build_finance_suggestions, build_grades, calc_total_score
+from app.util.report_finance_util import (build_finance_checks, build_finance_suggestions, build_grades,
+    calc_total_score, cap_profit_score, total_to_grade)
 
 PROMPT = "v3.3"
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "data" / "startfit_review_prompt.md"
@@ -31,11 +32,15 @@ async def analyze_report(text: str) -> ReportAiResult:
 
     finance_checks = build_finance_checks(llm_output.finance)
 
+    # 재무 수치가 틀린 기획서는 수익성 항목을 최대 "보통"으로 (등급·종합 점수 계산 전에)
+    cap_profit_score(llm_output.items, finance_checks)
+
     # 재무 수치 오류를 개선 제안에 합치고 (LLM은 계산을 안 해서 모름) 높음 → 보통 → 낮음 순서로 정렬
     merged = build_finance_suggestions(finance_checks) + llm_output.suggestions
     llm_output.suggestions = sorted(merged, key=lambda s: PRIORITY_ORDER[s.priority])
     grades = build_grades(llm_output.items)
     total_score = calc_total_score(llm_output.items)
+    total_grade = total_to_grade(total_score)
 
-    return ReportAiResult(llm=llm_output, grades=grades, total_score=total_score,
+    return ReportAiResult(llm=llm_output, grades=grades, total_score=total_score, total_grade=total_grade,
         finance_checks=finance_checks, prompt_version=PROMPT)
