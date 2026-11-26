@@ -6,7 +6,7 @@
 import numpy as np
 import pandas as pd
 
-from .loader import CATEGORICAL, shift_quarter
+from .loader import CATEGORICAL, shift_quarter 
 
 IND = "서비스_업종_코드"
 AREA = "상권_코드"
