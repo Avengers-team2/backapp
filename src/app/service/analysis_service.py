@@ -205,12 +205,11 @@ class AnalysisService:
         return to_result(saved, inp)
 
     async def _get_own_input(self, user_id: int, input_id: int):
-        inp = await self.input_repo.get_input(input_id)
-        if inp is None or inp.user_id != user_id:
+        inp = await self.input_repo.get_input(input_id, user_id)
+        if inp is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "분석 조건을 찾을 수 없습니다.")
         return inp
 
-    async def search_areas(self, keyword: str) -> list[AreaSearchResponseDTO]:
     async def list_my_analyses(self, user_id: int) -> list[MyAnalysisOptionDTO]:
         inputs = await self.input_repo.list_inputs(user_id, MY_ANALYSIS_LIMIT)
         options = []
@@ -226,7 +225,7 @@ class AnalysisService:
             ))
         return options
 
-    def search_areas(self, keyword: str) -> list[AreaSearchResponseDTO]:
+    async def search_areas(self, keyword: str) -> list[AreaSearchResponseDTO]:
         if not load_trdar_list():
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
