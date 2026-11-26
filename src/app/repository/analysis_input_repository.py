@@ -21,10 +21,6 @@ class AnalysisInputRepository:
         await self.db.commit()
         return result.scalar_one()
 
-    async def get_input(self, input_id: int) -> AnalysisInput | None:
-        result = await self.db.execute(select(AnalysisInput).where(AnalysisInput.input_id == input_id))
-        return result.scalar_one_or_none()
-
     async def get_analysis_by_input(self, input_id: int) -> Analysis | None:
         result = await self.db.execute(
             select(Analysis).where(Analysis.input_id == input_id).order_by(Analysis.analysis_id.desc()).limit(1)
@@ -37,6 +33,8 @@ class AnalysisInputRepository:
         await self.db.commit()
         await self.db.refresh(analysis)
         return analysis
+
+    # 본인이 입력한 조건만 조회 (남의 input_id 면 None)
     async def get_input(self, input_id: int, user_id: int) -> AnalysisInput | None:
         query = select(AnalysisInput).where(
             AnalysisInput.input_id == input_id,
