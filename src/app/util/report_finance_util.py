@@ -7,12 +7,12 @@ from app.schema.report_ai_schema import (
     Suggestion,
 )
 
-# ─────────────────────────────────────────
-# 설정값
-# ─────────────────────────────────────────
 
 # 1. 일치로 볼 허용 오차 (원문은 "약 670만 원"처럼 반올림이 많음)
 TOLERANCE_RATE = 0.01    # 1% 이내면 일치
+
+# 1-1. 투자금 회수 기간 허용 오차 (원문은 "약 8개월"처럼 반올림이 많아 1%로는 너무 엄격함)
+PAYBACK_TOLERANCE_MONTHS = 0.5    # 0.5개월 차이까지 일치
 
 # . 항목별 배점 (예시 PDF 기준 가안, 합계 100)
 ITEM_WEIGHTS = {
@@ -23,7 +23,6 @@ ITEM_WEIGHTS = {
     "operation_plan": 15,
     "risk_management": 10,
 }
-
 
 
 def sum_items(items: list[CostItem]) -> int | None:
@@ -47,6 +46,13 @@ def to_manwon(won: int | float) -> str:
     else:
         return f"{man:,.1f}만 원"
     
+
+def to_months(months: int | float) -> str:
+    # 10.0 → "10", 11.4 → "11.4" (PDF에 "10.0개월"로 찍히지 않게)
+    if float(months).is_integer():
+        return f"{int(months)}"
+    return f"{months}"
+
 
 def is_match(original: float, calculated: float) -> bool:
     if original == 0:
@@ -106,8 +112,8 @@ def check_funding(f: FinanceRaw) -> FinanceCheck:
     elif gap < 0:
         formula += f" (비용 합계보다 {to_manwon(-gap)} 부족)"
 
-    # 쓸 돈 기준으로 모은 돈이 맞는지 판정
-    result = "일치" if is_match(cost, fund) else "불일치"
+    # 모은 돈이 쓸 돈보다 모자랄 때만 불일치 (남는 돈은 운전자금·예비비라 오류가 아님)
+    result = "일치" if (fund >= cost or is_match(cost, fund)) else "불일치"
 
     return FinanceCheck(label=label, original=original, formula=formula, result=result)
 
@@ -192,22 +198,21 @@ def check_payback(f: FinanceRaw) -> FinanceCheck:
         profit = f.monthly_profit
 
     original = f.payback_months
+    display = f"약 {to_months(original)}개월" if original is not None else None
     if cost is None or profit is None or original is None:
-        display = f"약 {original}개월" if original is not None else None
         return FinanceCheck(label=label, original=display, formula=None, result="근거 누락")
     if profit <= 0:
-        display = f"약 {original}개월" if original is not None else None
         return FinanceCheck(label=label, original=display, formula=None, result="근거 누락")
 
     calc = round(cost / profit, 1)
-    formula = f"{to_manwon(cost)} ÷ {to_manwon(profit)} = 약 {calc}개월"
+    formula = f"{to_manwon(cost)} ÷ {to_manwon(profit)} = 약 {to_months(calc)}개월"
 
-    if is_match(original, calc) == True:
+    if abs(original - calc) <= PAYBACK_TOLERANCE_MONTHS:
         result = "일치"
     else:
         result = "불일치"
 
-    return FinanceCheck(label=label, original=f"약 {original}개월", formula=formula, result=result)
+    return FinanceCheck(label=label, original=display, formula=formula, result=result)
 
 
 def check_break_even(f: FinanceRaw) -> FinanceCheck:
@@ -259,8 +264,41 @@ def calc_total_score(items: list[ItemReview]) -> int:
     return round(total)
 
 
-# 재무 검산 결과를 개선 제안으로 바꾸기
-# LLM은 계산을 안 하니까 수치 오류를 모름 → 백엔드가 직접 제안을 만들어 앞에 붙인다
+# 종합 점수 → 종합 등급 (80 이상 우수 / 60~79 보통 / 40~59 미흡 / 40 미만 매우 미흡)
+def total_to_grade(total_score: int) -> str:
+    if total_score >= 80:
+        return "우수"
+    elif total_score >= 60:
+        return "보통"
+    elif total_score >= 40:
+        return "미흡"
+    else:
+        return "매우 미흡"
+
+
+PROFIT_ITEM_KEY = "business_model_profit"
+PROFIT_MAX_SCORE_WHEN_MISMATCH = 3
+
+def cap_profit_score(items: list[ItemReview], checks: list[FinanceCheck]) -> None:
+    if not any(check.result == "불일치" for check in checks):
+        return
+    for item in items:
+        if item.item_key == PROFIT_ITEM_KEY and item.score > PROFIT_MAX_SCORE_WHEN_MISMATCH:
+            item.score = PROFIT_MAX_SCORE_WHEN_MISMATCH
+
+
+# 검산 항목(label)별 개선 방법 문구
+FINANCE_ACTIONS = {
+    "창업 비용 합계": "세부 항목의 합과 적힌 합계가 다릅니다. 빠진 비용 항목이 있으면 표에 추가하고, 없으면 합계를 고쳐 적으세요.",
+    "자금 조달": "조달 자금과 창업 비용이 맞지 않습니다. 부족한 금액의 조달 방법을 추가하거나 창업 비용 계획을 조정하세요.",
+    "예상 매출": "객단가 × 하루 고객 수 × 월 영업일로 계산한 값과 다릅니다. 세 값을 다시 확인해 매출을 고치거나, 다른 산출 방식이면 그 근거를 적으세요.",
+    "운영 비용": "세부 항목의 합과 적힌 월 운영 비용 합계가 다릅니다. 빠진 비용 항목이 있으면 추가하고, 없으면 합계를 고쳐 적으세요.",
+    "월 순이익": "월 매출에서 월 운영 비용을 뺀 값과 다릅니다. 매출과 비용 수치를 다시 확인해 순이익을 고쳐 적으세요.",
+    "투자금 회수 기간": "창업 비용을 월 순이익으로 나눈 값과 다릅니다. 두 수치를 기준으로 회수 기간을 다시 계산해 적으세요.",
+}
+DEFAULT_FINANCE_ACTION = "원문 수치를 다시 계산해 고쳐 적으세요."
+
+
 def build_finance_suggestions(checks: list[FinanceCheck]) -> list[Suggestion]:
     suggestions = []
 
@@ -270,7 +308,7 @@ def build_finance_suggestions(checks: list[FinanceCheck]) -> list[Suggestion]:
             suggestions.append(Suggestion(
                 priority="높음",
                 problem=f"{check.label} 수치 오류 (원문: {check.original})",
-                action=f"검산 결과({check.formula})와 맞지 않습니다. 원문 수치를 다시 계산해 고치거나, 빠진 항목을 표에 추가해 맞추세요.",
+                action=f"검산 결과({check.formula})와 맞지 않습니다. {FINANCE_ACTIONS.get(check.label, DEFAULT_FINANCE_ACTION)}",
             ))
         # 손익분기점은 원문에 없으면 항상 근거 누락 → 보통
         elif check.label == "손익분기점" and check.result == "근거 누락":

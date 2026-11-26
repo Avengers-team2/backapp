@@ -76,6 +76,20 @@ class ReportJobRepository:
         await self.db.execute(query)
         await self.db.commit()
 
+    # 7. 다시 검토하기: 실패한 요청을 처음 단계로 되돌림 (에러 메시지·완료 일시 비움)
+    async def reset_for_retry(self, report_job_id: int) -> None:
+        query = (
+            update(ReportJob)
+            .where(ReportJob.report_job_id == report_job_id)
+            .values(
+                report_job_status=ReportStatus.FILE_CHECK,
+                report_job_error_message=None,
+                report_job_completed_at=None,
+            )
+        )
+        await self.db.execute(query)
+        await self.db.commit()
+
     # 6. 검토 요청 삭제
     async def delete_job(self, report_job_id: int) -> None:
         query = delete(ReportJob).where(ReportJob.report_job_id == report_job_id)

@@ -2,6 +2,10 @@ import asyncio
 import hashlib
 import io
 import os
+import traceback
+import unicodedata
+import uuid
+from datetime import datetime
 
 from fastapi import Depends, HTTPException, UploadFile, status
 
@@ -13,11 +17,15 @@ from app.repository.report_job_repository import ReportJobRepository, get_report
 from app.schema.common_schema import PageResponseDTO
 from app.schema.report_job_schema import ReportJobResponseDTO
 from app.service.s3_service import S3Service, get_s3_service
+from app.service.s3_service import AWS_S3_BUCKET
+from app.repository.report_export_repository import ReportExportRepository
+from app.service.report_ai_service import analyze_report
+from app.util.report_pdf_util import build_report_pdf
+from app.util.report_text_util import extract_report_text, has_enough_text
 
 ALLOWED_FILE_TYPES = {"pdf", "docx"}        # 기획서 허용 형식 (hwp는 팀 결정 후 추가)
 MAX_FILE_SIZE = 10 * 1024 * 1024            # 10MB (s3_api와 동일)
 DELETABLE_STATUSES = {ReportStatus.PENDING, ReportStatus.FAILED}   # 시작 전이거나 실패한 것만 삭제 가능
-DEMO_STEP_SECONDS = 2                       # AI 연결 전, 진행 모달 확인용 단계별 대기 시간
 
 
 # 예외처리
@@ -30,7 +38,8 @@ class ReportJobService:
 
     # 1. 기획서 업로드 → S3 저장 → report_job 생성 (status: PENDING)
     async def upload(self, user_id: int, file: UploadFile) -> ReportJobResponseDTO:
-        file_name = os.path.basename(file.filename or "")
+        # Mac에서 올린 한글 파일 이름(자모가 쪼개진 NFD)을 일반 형태(NFC)로 맞춘다.
+        file_name = unicodedata.normalize("NFC", os.path.basename(file.filename or ""))
         file_type = os.path.splitext(file_name)[1].lower().lstrip(".")   # "카페.PDF" → "pdf"
 
         if file_type not in ALLOWED_FILE_TYPES:
@@ -71,6 +80,18 @@ class ReportJobService:
             raise HTTPException(status.HTTP_409_CONFLICT, "이미 시작했거나 끝난 검토입니다.")
 
         await self.report_job_repo.update_status(report_job_id, ReportStatus.FILE_CHECK)
+
+        job = await self.report_job_repo.get_by_id(report_job_id)
+        return ReportJobResponseDTO.model_validate(job)
+
+    # 2-1. 다시 검토하기 (FAILED → FILE_CHECK). 오류 화면의 '다시 검토하기' 버튼
+    async def retry(self, user_id: int, report_job_id: int) -> ReportJobResponseDTO:
+        job = await self._get_owned_job(user_id, report_job_id)
+
+        if job.report_job_status != ReportStatus.FAILED:
+            raise HTTPException(status.HTTP_409_CONFLICT, "실패한 검토만 다시 시도할 수 있습니다.")
+
+        await self.report_job_repo.reset_for_retry(report_job_id)
 
         job = await self.report_job_repo.get_by_id(report_job_id)
         return ReportJobResponseDTO.model_validate(job)
@@ -131,33 +152,65 @@ def count_pdf_pages(content: bytes) -> int | None:
 
 # 백그라운드 검토 작업
 # 응답을 보낸 뒤에 실행되므로 요청용 DB 세션을 쓰지 않고 새로 연다.
-async def run_report_review(report_job_id: int) -> None:
+# 1단계 파일 확인 → 2단계 Gemini 검토 → 3단계 검토 보고서 PDF 생성·S3 저장 → 완료
+async def run_report_review(report_job_id: int, s3_service: S3Service) -> None:
     async with AsyncSessionLocal() as db:
         repo = ReportJobRepository(db)
+        export_repo = ReportExportRepository(db)
         try:
+            job = await repo.get_by_id(report_job_id)
+
             # 1단계: 파일 확인 (FILE_CHECK는 start에서 이미 설정됨)
-            # TODO(상아): S3에서 파일을 받아 문서 로더로 텍스트 추출, 글자가 너무 적으면 실패 처리
-            await asyncio.sleep(DEMO_STEP_SECONDS)
+            # S3에서 원본을 받아 문서 로더로 텍스트를 뽑는다.
+            obj = await s3_service.s3_client.get_object(Bucket=AWS_S3_BUCKET, Key=job.report_job_file_path)
+            content = await obj["Body"].read()
+            text = await asyncio.to_thread(extract_report_text, content, job.report_job_file_type)
 
-            # 2단계: AI 검토
+            if not has_enough_text(text):
+                raise ReviewFailed("글자를 읽을 수 없는 파일입니다. 스캔 이미지가 아닌, 글자가 들어 있는 PDF·DOCX로 다시 올려 주세요.")
+
+            # 2단계: AI 검토 (Gemini)
             await repo.update_status(report_job_id, ReportStatus.AI_REVIEW)
-            # TODO(상아): LangChain 항목별 채점 호출
-            await asyncio.sleep(DEMO_STEP_SECONDS)
+            result = await analyze_report(text)
 
-            # 3단계: 검토 결과 정리
+            if result.llm.status == "UNAVAILABLE":
+                raise ReviewFailed(f"{result.llm.unavailable_reason} {result.llm.guide}".strip()
+                                   or "사업계획서로 검토할 수 없는 문서입니다.")
+
+            # 3단계: 검토 결과 정리 → 검토 보고서 PDF 만들기 → S3 저장 → report_export 기록
             await repo.update_status(report_job_id, ReportStatus.SUMMARIZING)
-            # TODO: 점수 합산, report_export 저장
-            await asyncio.sleep(DEMO_STEP_SECONDS)
+            pdf_bytes = await asyncio.to_thread(build_report_pdf, result, job.report_job_file_name)
+
+            stem = os.path.splitext(job.report_job_file_name)[0]
+            today = datetime.now().strftime("%Y/%m/%d")
+            export_key = f"{S3Folder.REPORT.value}/{today}/export/{uuid.uuid4()}/검토보고서_{stem}.pdf"
+            await s3_service.s3_client.put_object(
+                Bucket=AWS_S3_BUCKET,
+                Key=export_key,
+                Body=pdf_bytes,
+                ContentType="application/pdf",
+            )
+            await export_repo.create_export(report_job_id, export_key, result.model_dump(mode="json"))
 
             await repo.update_status(report_job_id, ReportStatus.COMPLETED)
 
+        except ReviewFailed as e:
+            await db.rollback()
+            await repo.update_status(report_job_id, ReportStatus.FAILED, str(e))
+
         except Exception:
+            traceback.print_exc()   # 원인은 서버 터미널에서 확인
             await db.rollback()
             await repo.update_status(
                 report_job_id,
                 ReportStatus.FAILED,
-                "검토 중 오류가 발생했습니다. 다시 시도해 주세요."
+                "AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요."
             )
+
+
+# 화면에 그대로 보여 줄 실패 사유가 있는 경우
+class ReviewFailed(Exception):
+    pass
 
 
 # 레포지토리 주입 팩토리 함수

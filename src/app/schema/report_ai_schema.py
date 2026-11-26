@@ -185,7 +185,7 @@ class ReportAiLlmOutput(BaseModel):
 # [B] 백엔드가 계산해서 붙이는 부분 (LLM에는 넘기지 않음)
 # ─────────────────────────────────────────
 
-Grade = Literal["우수", "보통", "미흡", "매우 미흡"]   # 가안: 희수랑 합의 후 확정
+Grade = Literal["우수", "보통", "미흡", "매우 미흡"]   # 항목 등급·종합 등급 공통 (희수와 합의 확정)
 CheckResult = Literal["일치", "불일치", "근거 누락"]
 
 
@@ -204,6 +204,7 @@ class FinanceCheck(BaseModel):
 class ReportAiResult(BaseModel):
     llm: ReportAiLlmOutput
     grades: list[ItemGrade] = Field(default_factory=list)
-    total_score: int | None = None              # 100점 환산 (내부용, PDF에 안 나감)
+    total_score: int | None = None              # 종합 점수 100점 환산 (화면·PDF에 표시)
+    total_grade: Grade | None = None            # 종합 등급 (80↑ 우수 / 60~79 보통 / 40~59 미흡 / 40 미만 매우 미흡)
     finance_checks: list[FinanceCheck] = Field(default_factory=list)
     prompt_version: str = "v3"

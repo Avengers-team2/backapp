@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 
 from app.infrastructure.external.franchise_api import BrandApiError, load_brands
 from app.repository.analysis_input_repository import AnalysisInputRepository, get_analysis_input_repository
+from app.schema.support_schema import MyAnalysisOptionDTO
 from app.schema.analysis_input_schema import (
     AnalysisInputCreateDTO,
     AreaLocateResponseDTO,
@@ -21,6 +22,7 @@ from app.util.scoring_input_util import build_scoring_user
 from app.util.trdar_predict_util import analyze, get_extra, get_model_store_count, industry_name, list_industries, sales_area_codes
 from app.util.trdar_geo_util import find_trdar_by_point, get_trdar_center, get_trdar_polygon, is_geo_data_loaded
 from app.util.trdar_util import exists_trdar, load_trdar_list, normalize, search_trdar
+from app.util.trdar_util import exists_trdar, find_trdar, load_trdar_list, normalize, search_trdar
 
 # 화면의 운영 시간 칩 → (시작 시, 끝 시)
 OPERATING_SLOTS: dict[str, tuple[int, int]] = {
@@ -34,6 +36,7 @@ OPERATING_SLOTS: dict[str, tuple[int, int]] = {
 FRANCHISE_MAP = {"예": True, "아니요": False}
 
 SEARCH_LIMIT = 8
+MY_ANALYSIS_LIMIT = 10
 
 
 class AnalysisService:
@@ -208,6 +211,22 @@ class AnalysisService:
         return inp
 
     async def search_areas(self, keyword: str) -> list[AreaSearchResponseDTO]:
+    async def list_my_analyses(self, user_id: int) -> list[MyAnalysisOptionDTO]:
+        inputs = await self.input_repo.list_inputs(user_id, MY_ANALYSIS_LIMIT)
+        options = []
+        for item in inputs:
+            area = find_trdar(item.input_trdar_cd)
+            place = area["name"] if area else item.input_trdar_cd
+            gu = area["gu"] if area else ""
+            parts = [gu, item.input_industry_small, item.input_use_purpose]
+            options.append(MyAnalysisOptionDTO(
+                input_id=item.input_id,
+                label=f"{place} · {item.input_industry_small}",
+                summary=" · ".join(p for p in parts if p),
+            ))
+        return options
+
+    def search_areas(self, keyword: str) -> list[AreaSearchResponseDTO]:
         if not load_trdar_list():
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,

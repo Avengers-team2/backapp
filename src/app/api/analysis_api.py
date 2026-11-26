@@ -172,6 +172,22 @@ async def get_analysis_result(
     result = await analysis_service.get_result(user_claims.user_id, input_id)
 
     return ApiResponseDTO(success=True, message="분석 결과 조회 성공", data=result)
+@router.get(
+    "/me",
+    summary="내 분석 조건 목록",
+    response_model=ApiResponseDTO
+)
+async def list_my_analyses(
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    analysis_service: AnalysisService = Depends(get_analysis_service)
+):
+    analyses = await analysis_service.list_my_analyses(user_claims.user_id)
+
+    return ApiResponseDTO(
+        success=True,
+        message="내 분석 목록 조회 성공",
+        data=analyses
+    )
 
 
 # 분석 조건 저장 (분석 시작하기)

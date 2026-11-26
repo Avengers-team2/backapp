@@ -37,6 +37,23 @@ class AnalysisInputRepository:
         await self.db.commit()
         await self.db.refresh(analysis)
         return analysis
+    async def get_input(self, input_id: int, user_id: int) -> AnalysisInput | None:
+        query = select(AnalysisInput).where(
+            AnalysisInput.input_id == input_id,
+            AnalysisInput.user_id == user_id,
+        )
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
+
+    async def list_inputs(self, user_id: int, limit: int) -> list[AnalysisInput]:
+        query = (
+            select(AnalysisInput)
+            .where(AnalysisInput.user_id == user_id)
+            .order_by(AnalysisInput.input_requested_at.desc())
+            .limit(limit)
+        )
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
 
 
 def get_analysis_input_repository(db: AsyncSession = Depends(get_postgresql_db)):
