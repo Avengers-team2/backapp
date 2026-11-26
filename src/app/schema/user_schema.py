@@ -22,7 +22,8 @@ class UserVO(BaseModel):
     user_status: str
     user_business_status: str
     user_interest_region: str | None = None
-    user_interest_industry: str | None = None 
+    user_interest_industry: str | None = None
+    user_profile: str | None = "/users/default.jpg"
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 
@@ -98,6 +99,7 @@ class UserUpdateDTO(BaseModel):
     user_interest_region: str | None = None
     user_interest_industry: str | None = None
     user_agree_marketing: bool | None = None  # 마케팅 수신 동의는 나중에 변경 가능
+    user_profile: str | None = "/users/default.jpg"
 
     class Config:
         from_attributes = True
@@ -120,6 +122,7 @@ class UserResponseDTO(BaseModel):
     user_interest_region: str | None = None
     user_interest_industry: str | None = None
     user_agree_marketing: bool = False
+    user_profile: str | None = "/users/default.jpg"
 
     class Config:
         from_attributes = True
