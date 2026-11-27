@@ -17,6 +17,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.schema.report_ai_schema import ReportAiResult
+from app.util.report_score_util import item_score, total_grade
 
 # 한글 폰트
 # data/report_ai/fonts 의 나눔고딕(Regular/Bold)을 PDF 안에 넣어서(임베드) 어느 컴퓨터에서나 똑같이 보이게 한다.
@@ -81,6 +82,9 @@ STYLES = {
     "cell_head": ParagraphStyle("cell_head", fontName=FONT_BOLD, fontSize=8.5, leading=12.5, textColor=colors.white),
     "glance_label": ParagraphStyle("glance_label", fontName=FONT, fontSize=8, leading=11, textColor=GRAY, alignment=TA_CENTER),
     "glance_value": ParagraphStyle("glance_value", fontName=FONT_BOLD, fontSize=11, leading=15, alignment=TA_CENTER),
+    "glance_score": ParagraphStyle("glance_score", fontName=FONT, fontSize=8.5, leading=12, textColor=GRAY, alignment=TA_CENTER),
+    "total_label": ParagraphStyle("total_label", fontName=FONT, fontSize=9, leading=13, textColor=GRAY),
+    "total_value": ParagraphStyle("total_value", fontName=FONT_BOLD, fontSize=22, leading=28, textColor=NAVY),
 }
 
 
@@ -117,34 +121,56 @@ def _table(header, rows, col_widths):
     return table
 
 
-# 한눈에 보기: 6개 항목 등급 + 개선 제안·재무 검산 요약
+# 한눈에 보기: 종합 점수·등급 + 6개 항목 등급·점수 + 개선 제안·재무 검산 요약
 def _glance(result: ReportAiResult, width: float):
     llm = result.llm
     grades = {g.item_key: g.grade for g in result.grades}
+    total = result.total_score
+    t_grade = total_grade(total)
 
-    # 1줄: 항목 이름 / 2줄: 등급 (6칸)
-    keys = [item.item_key for item in llm.items]
-    names = [_p(ITEM_LABELS.get(k, k), "glance_label") for k in keys]
-    values = [_colored(grades.get(k, "-"), GRADE_COLORS.get(grades.get(k, ""), "#14213D"), "glance_value") for k in keys]
+    # 종합 점수 · 종합 등급
+    total_table = Table(
+        [[
+            [_p("종합 점수", "total_label"), _p(f"{total}점" if total is not None else "-", "total_value")],
+            [_p("종합 등급", "total_label"),
+             _colored(t_grade or "-", GRADE_COLORS.get(t_grade or "", "#14213D"), "total_value")],
+            _p("항목별 1~5단계 평가를 100점으로 환산하고, 항목 가중치(아이템·시장·수익성 20, 마케팅·운영 15, 위험 10)를 반영한 점수입니다.", "small"),
+        ]],
+        colWidths=[width * 0.2, width * 0.2, width * 0.6],
+    )
+    total_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, -1), 0),
+        ("LINEAFTER", (0, 0), (1, -1), 0.5, LINE),
+        ("LEFTPADDING", (1, 0), (-1, -1), 12),
+    ]))
 
-    grade_table = Table([names, values], colWidths=[width / max(len(keys), 1)] * max(len(keys), 1))
+    # 항목별: 이름 / 등급 / 점수 (6칸)
+    items = llm.items
+    count = max(len(items), 1)
+    names = [_p(ITEM_LABELS.get(i.item_key, i.item_key), "glance_label") for i in items]
+    values = [_colored(grades.get(i.item_key, "-"), GRADE_COLORS.get(grades.get(i.item_key, ""), "#14213D"), "glance_value")
+              for i in items]
+    scores = [_p(f"{item_score(i.score)}점", "glance_score") for i in items]
+
+    grade_table = Table([names, values, scores], colWidths=[width / count] * count)
     grade_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), MINT_LIGHT),
         ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.white),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, 0), 8),
-        ("BOTTOMPADDING", (0, 1), (-1, 1), 8),
+        ("TOPPADDING", (0, 2), (-1, 2), 0),
+        ("BOTTOMPADDING", (0, 2), (-1, 2), 8),
     ]))
 
     high = sum(1 for s in llm.suggestions if s.priority == "높음")
     mismatch = sum(1 for c in result.finance_checks if c.result == "불일치")
     missing = sum(1 for c in result.finance_checks if c.result == "근거 누락")
-
     summary = _p(
         f"우선 보완이 필요한 개선 제안 {high}건  ·  재무 수치 불일치 {mismatch}건  ·  재무 근거 누락 {missing}건",
         "small",
     )
-    return [grade_table, Spacer(1, 2 * mm), summary]
+    return [total_table, Spacer(1, 4 * mm), grade_table, Spacer(1, 2 * mm), summary]
 
 
 # 모든 쪽 아래에 "StartFit 기획서 AI 검토 보고서 · 1 / 4" 표시
@@ -217,17 +243,19 @@ def build_report_pdf(result: ReportAiResult, source_file_name: str) -> bytes:
             [
                 ITEM_LABELS.get(item.item_key, item.item_key),
                 _colored(grades.get(item.item_key, "-"), GRADE_COLORS.get(grades.get(item.item_key, ""), "#14213D")),
+                f"{item_score(item.score)}점",
                 item.evidence.judgment,
             ]
             for item in llm.items
         ]
         story += [_p("2. 항목별 평가", "h2"),
-                  _table(["평가 항목", "등급", "평가 의견"], rows, [width * 0.26, width * 0.12, width * 0.62])]
+                  _table(["평가 항목", "등급", "점수", "평가 의견"], rows,
+                         [width * 0.24, width * 0.11, width * 0.1, width * 0.55])]
 
         # 항목별 상세는 새 쪽에서 시작
         story += [PageBreak(), _p("항목별 상세 평가", "h2")]
         for item in llm.items:
-            block = [_p(f"{ITEM_LABELS.get(item.item_key, item.item_key)} · {grades.get(item.item_key, '-')}", "h3")]
+            block = [_p(f"{ITEM_LABELS.get(item.item_key, item.item_key)} · {grades.get(item.item_key, '-')} ({item_score(item.score)}점)", "h3")]
             if item.evidence.quote:
                 page = f" (p.{item.evidence.page})" if item.evidence.page else ""
                 block += [_p(f"원문 근거{page}: “{item.evidence.quote}”", "small")]

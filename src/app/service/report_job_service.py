@@ -21,6 +21,7 @@ from app.service.s3_service import AWS_S3_BUCKET
 from app.repository.report_export_repository import ReportExportRepository
 from app.service.report_ai_service import analyze_report
 from app.util.report_pdf_util import build_report_pdf
+from app.util.report_score_util import apply_finance_cap
 from app.util.report_text_util import extract_report_text, has_enough_text
 
 ALLOWED_FILE_TYPES = {"pdf", "docx"}        # 기획서 허용 형식 (hwp는 팀 결정 후 추가)
@@ -171,7 +172,7 @@ async def run_report_review(report_job_id: int, s3_service: S3Service) -> None:
 
             # 2단계: AI 검토 (Gemini)
             await repo.update_status(report_job_id, ReportStatus.AI_REVIEW)
-            result = await analyze_report(text)
+            result = await analyze_with_retry(text)
 
             if result.llm.status == "UNAVAILABLE":
                 raise ReviewFailed(f"{result.llm.unavailable_reason} {result.llm.guide}".strip()
@@ -179,6 +180,7 @@ async def run_report_review(report_job_id: int, s3_service: S3Service) -> None:
 
             # 3단계: 검토 결과 정리 → 검토 보고서 PDF 만들기 → S3 저장 → report_export 기록
             await repo.update_status(report_job_id, ReportStatus.SUMMARIZING)
+            result = apply_finance_cap(result)   # 재무 불일치 시 수익성 최대 '보통' (합의 기준)
             pdf_bytes = await asyncio.to_thread(build_report_pdf, result, job.report_job_file_name)
 
             stem = os.path.splitext(job.report_job_file_name)[0]
@@ -198,19 +200,51 @@ async def run_report_review(report_job_id: int, s3_service: S3Service) -> None:
             await db.rollback()
             await repo.update_status(report_job_id, ReportStatus.FAILED, str(e))
 
-        except Exception:
+        except Exception as e:
             traceback.print_exc()   # 원인은 서버 터미널에서 확인
             await db.rollback()
-            await repo.update_status(
-                report_job_id,
-                ReportStatus.FAILED,
-                "AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요."
-            )
+            await repo.update_status(report_job_id, ReportStatus.FAILED, failure_message(e))
 
 
 # 화면에 그대로 보여 줄 실패 사유가 있는 경우
 class ReviewFailed(Exception):
     pass
+
+
+# Gemini가 붐빌 때(503) 기다리는 시간(초). 이 간격으로 최대 3번 더 시도한다.
+GEMINI_BUSY_RETRY_DELAYS = [15, 30, 60]
+
+
+def is_gemini_busy(e: Exception) -> bool:
+    text = str(e)
+    return "503" in text or "UNAVAILABLE" in text or "overloaded" in text
+
+
+def is_gemini_quota(e: Exception) -> bool:
+    text = str(e)
+    return "429" in text or "RESOURCE_EXHAUSTED" in text
+
+
+# Gemini 검토 호출 (503이면 15초 → 30초 → 60초 기다렸다가 다시 시도, 그 외 오류는 바로 실패)
+async def analyze_with_retry(text: str):
+    for delay in GEMINI_BUSY_RETRY_DELAYS:
+        try:
+            return await analyze_report(text)
+        except Exception as e:
+            if not is_gemini_busy(e):
+                raise
+            print(f"[report] Gemini 혼잡(503) → {delay}초 뒤 다시 시도")
+            await asyncio.sleep(delay)
+    return await analyze_report(text)   # 마지막 시도 (실패하면 그대로 오류)
+
+
+# 실패 원인에 맞는 안내 문구 (오류 화면·상태 조회에 그대로 표시)
+def failure_message(e: Exception) -> str:
+    if is_gemini_quota(e):
+        return "오늘 AI 검토 사용량을 모두 사용했어요. 내일 다시 시도해 주세요."
+    if is_gemini_busy(e):
+        return "지금 AI 서버에 요청이 몰려 있어요. 잠시 후 '다시 검토하기'를 눌러 주세요."
+    return "AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요."
 
 
 # 레포지토리 주입 팩토리 함수
