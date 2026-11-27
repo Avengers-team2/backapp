@@ -194,3 +194,23 @@ async def get_report_export_url(
         message="검토 보고서 다운로드 링크 발급 성공",
         data=download
     )
+
+
+# 10. 검토 결과 조회 (결과 화면, COMPLETED인 요청만 가능)
+@router.get(
+    "/jobs/{report_job_id}/result",
+    summary="검토 결과 조회",
+    response_model=ApiResponseDTO
+)
+async def get_report_result_data(
+    report_job_id: int,
+    user_claims: UserClaimDTO = Depends(get_current_user),
+    report_export_service: ReportExportService = Depends(get_report_export_service)
+):
+    result = await report_export_service.get_result(user_claims.user_id, report_job_id)
+
+    return ApiResponseDTO(
+        success=True,
+        message="검토 결과 조회 성공",
+        data=result
+    )
