@@ -6,6 +6,7 @@ from app.infrastructure.llm import get_llm
 from app.schema.report_ai_schema import (Evidence, FinanceRaw, ItemKey, ItemReview, ReportAiLlmOutput,
     ReportAiResult, Suggestion)
 from app.util.report_paragraph_util import split_report_paragraphs
+from app.util.report_finance_extract_util import extract_finance
 from app.util.report_finance_util import (build_finance_checks, build_finance_suggestions, build_grades,
     calc_total_score, cap_profit_score, total_to_grade)
 
@@ -13,9 +14,12 @@ PROMPT = "v3.3"
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "llm_prompt" / "startfit_review_prompt.md"
 ITEM_KEY_ORDER = get_args(ItemKey)   # 스키마에 정의된 6개 항목 key 순서 (①~⑥)
 PRIORITY_ORDER = {"높음": 0, "보통": 1, "낮음": 2}
+FINANCE_PROMPT_PATH = Path(__file__).resolve().parent.parent / "llm_prompt" / "startfit_finance_prompt.md"
 
 # 문단 분류 모델 모드 (.env REVIEW_MODE=model 일 때 Gemini 대신 사용)
-MODEL_VERSION = "model-exp2"
+# MODEL_VERSION = "model-exp2"   # 상아 RoBERTa
+# MODEL_VERSION = "model-tfidf"   # 희수 TF-IDF
+MODEL_VERSION = "model-ensemble"   # RoBERTa + TF-IDF 평균
 
 ITEM_NAMES = {
     "item_differentiation": "사업 아이템 및 차별성",
@@ -121,10 +125,13 @@ async def analyze_report_with_model(text: str) -> ReportAiResult:
 
         items.append(ItemReview(item_key=key, score=score, evidence=evidence, gaps=gaps))
 
-    llm_output = ReportAiLlmOutput(status="OK",
-                                   summary="문단 분류 모델로 항목별 관련 문단을 확인한 간이 검토 결과입니다.",
-                                   items=items, finance=FinanceRaw(), suggestions=suggestions)
+    finance, finance_source = await extract_finance_for_model(text, paragraphs)
 
+    llm_output = ReportAiLlmOutput(status="OK",
+                                   summary=f"문단 분류 모델로 항목별 관련 문단을 확인한 간이 검토 결과입니다. (재무 수치: {finance_source})",
+                                   items=items, finance=finance, suggestions=suggestions)
+
+    # 재무 수치는 원문 값만 뽑았으므로 Gemini 모드와 같은 방식으로 검산한다
     finance_checks = build_finance_checks(llm_output.finance)
     cap_profit_score(llm_output.items, finance_checks)
     merged = build_finance_suggestions(finance_checks) + llm_output.suggestions
@@ -135,3 +142,22 @@ async def analyze_report_with_model(text: str) -> ReportAiResult:
 
     return ReportAiResult(llm=llm_output, grades=grades, total_score=total_score, total_grade=total_grade,
         finance_checks=finance_checks, prompt_version=MODEL_VERSION)
+
+
+async def extract_finance_for_model(text: str, paragraphs: list[tuple[int | None, str, str]]) -> tuple[FinanceRaw, str]:
+    # 1) Gemini에 재무 수치만 묻는다 (짧은 별도 프롬프트, 출력은 FinanceRaw)
+    # 2) Gemini가 실패하면(503·429 등) 규칙 추출로 대신한다 → 모델 모드는 Gemini 없이도 끝까지 돈다
+    try:
+        system_prompt = FINANCE_PROMPT_PATH.read_text(encoding="utf-8")
+        structured_llm = get_llm().with_structured_output(FinanceRaw)
+        messages = [
+            ("system", system_prompt),
+            ("human", f"<document>\n{text}\n</document>"),
+        ]
+        finance = await structured_llm.ainvoke(messages)
+        if finance is None:
+            raise ValueError("Gemini 재무 응답이 비어 있음")
+        return finance, "Gemini 추출"
+    except Exception as e:
+        print(f"[재무 추출] Gemini 실패, 규칙 추출로 대신함: {type(e).__name__}: {e}")
+        return extract_finance([(section, para) for _, section, para in paragraphs]), "규칙 추출 (Gemini 응답 실패)"
