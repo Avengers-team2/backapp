@@ -1,7 +1,11 @@
+import asyncio
+import os
 from pathlib import Path
 from typing import get_args
 from app.infrastructure.llm import get_llm
-from app.schema.report_ai_schema import ItemKey, ReportAiLlmOutput, ReportAiResult
+from app.schema.report_ai_schema import (Evidence, FinanceRaw, ItemKey, ItemReview, ReportAiLlmOutput,
+    ReportAiResult, Suggestion)
+from app.util.report_paragraph_util import split_report_paragraphs
 from app.util.report_finance_util import (build_finance_checks, build_finance_suggestions, build_grades,
     calc_total_score, cap_profit_score, total_to_grade)
 
@@ -10,7 +14,32 @@ PROMPT_PATH = Path(__file__).resolve().parent.parent / "llm_prompt" / "startfit_
 ITEM_KEY_ORDER = get_args(ItemKey)   # 스키마에 정의된 6개 항목 key 순서 (①~⑥)
 PRIORITY_ORDER = {"높음": 0, "보통": 1, "낮음": 2}
 
+# 문단 분류 모델 모드 (.env REVIEW_MODE=model 일 때 Gemini 대신 사용)
+MODEL_VERSION = "model-exp2"
+
+ITEM_NAMES = {
+    "item_differentiation": "사업 아이템 및 차별성",
+    "market_customer": "시장성 및 고객 분석",
+    "business_model_profit": "사업 모델 및 수익성",
+    "marketing": "마케팅 전략",
+    "operation_plan": "운영 및 실행 계획",
+    "risk_management": "위험 관리",
+}
+
+# 목차 제목에 이 단어가 있으면 문단이 0개여도 누락으로 보지 않음 (거짓 누락 줄이기)
+SECTION_KEYWORDS = {
+    "item_differentiation": ["차별", "아이템", "경쟁력"],
+    "market_customer": ["시장", "고객", "상권", "입지"],
+    "business_model_profit": ["수익", "매출", "재무", "자금", "비용"],
+    "marketing": ["마케팅", "홍보", "판촉"],
+    "operation_plan": ["운영", "실행", "일정"],
+    "risk_management": ["위험", "리스크", "대응"],
+}
+
 async def analyze_report(text: str) -> ReportAiResult:
+    if os.getenv("REVIEW_MODE") == "model":
+        return await analyze_report_with_model(text)
+
     system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
     structured_llm = get_llm().with_structured_output(ReportAiLlmOutput)
 
@@ -44,3 +73,65 @@ async def analyze_report(text: str) -> ReportAiResult:
 
     return ReportAiResult(llm=llm_output, grades=grades, total_score=total_score, total_grade=total_grade,
         finance_checks=finance_checks, prompt_version=PROMPT)
+
+
+def count_to_score(count: int) -> int:
+    if count == 0:
+        return 1
+    if count == 1:
+        return 2
+    if count <= 3:
+        return 3
+    return 4
+
+
+async def analyze_report_with_model(text: str) -> ReportAiResult:
+    # torch·transformers가 없는 환경에서도 서버가 켜지도록 모델 모드일 때만 불러온다
+    from app.infrastructure.paragraph_model import predict_paragraphs
+
+    paragraphs = split_report_paragraphs(text)
+    if not paragraphs:
+        raise ValueError("문단을 찾지 못했습니다")
+
+    preds = await asyncio.to_thread(predict_paragraphs, [para for _, _, para in paragraphs])
+    sections = " ".join(section for _, section, _ in paragraphs)
+
+    items = []
+    suggestions = []
+    for key in ITEM_KEY_ORDER:
+        matched = [(page, para, prob) for (page, _, para), (label, prob) in zip(paragraphs, preds) if label == key]
+        count = len(matched)
+        if count == 0 and any(word in sections for word in SECTION_KEYWORDS[key]):
+            count = 1
+        score = count_to_score(count)
+
+        if matched:
+            best = max(matched, key=lambda m: m[2])
+            evidence = Evidence(quote=best[1][:100], page=best[0],
+                                judgment=f"관련 문단 {len(matched)}개를 찾았습니다.")
+            gaps = []
+        else:
+            evidence = Evidence(quote=None, page=None, judgment="관련 문단을 찾지 못했습니다 (확인 필요).")
+            gaps = [f"{ITEM_NAMES[key]} 관련 내용을 찾지 못함"]
+
+        if score == 1:
+            suggestions.append(Suggestion(priority="보통",
+                                          problem=f"{ITEM_NAMES[key]} 관련 내용을 찾지 못했습니다.",
+                                          action=f"{ITEM_NAMES[key]} 내용을 추가해 주세요."))
+
+        items.append(ItemReview(item_key=key, score=score, evidence=evidence, gaps=gaps))
+
+    llm_output = ReportAiLlmOutput(status="OK",
+                                   summary="문단 분류 모델로 항목별 관련 문단을 확인한 간이 검토 결과입니다.",
+                                   items=items, finance=FinanceRaw(), suggestions=suggestions)
+
+    finance_checks = build_finance_checks(llm_output.finance)
+    cap_profit_score(llm_output.items, finance_checks)
+    merged = build_finance_suggestions(finance_checks) + llm_output.suggestions
+    llm_output.suggestions = sorted(merged, key=lambda s: PRIORITY_ORDER[s.priority])
+    grades = build_grades(llm_output.items)
+    total_score = calc_total_score(llm_output.items)
+    total_grade = total_to_grade(total_score)
+
+    return ReportAiResult(llm=llm_output, grades=grades, total_score=total_score, total_grade=total_grade,
+        finance_checks=finance_checks, prompt_version=MODEL_VERSION)
