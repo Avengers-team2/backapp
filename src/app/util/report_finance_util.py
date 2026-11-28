@@ -1,3 +1,5 @@
+import re
+
 from app.schema.report_ai_schema import (
     CostItem,
     FinanceCheck,
@@ -13,6 +15,12 @@ TOLERANCE_RATE = 0.01    # 1% 이내면 일치
 
 # 1-1. 투자금 회수 기간 허용 오차 (원문은 "약 8개월"처럼 반올림이 많아 1%로는 너무 엄격함)
 PAYBACK_TOLERANCE_MONTHS = 0.5    # 0.5개월 차이까지 일치
+
+# 1-2. 손익분기점 허용 오차 (원문은 "약 3,150만 원"처럼 어림값이 많음)
+BREAK_EVEN_TOLERANCE_RATE = 0.05    # 5% 이내면 일치
+
+# 1-3. 월 운영 비용 중 매출에 따라 변하는 비용(변동비) 항목 이름 → 손익분기점 계산 때 고정비에서 뺀다
+VARIABLE_COST_PATTERN = r"재료|자재|원가|식자재|원재료|생화|매입|부자재"
 
 # . 항목별 배점 (예시 PDF 기준 가안, 합계 100)
 ITEM_WEIGHTS = {
@@ -216,7 +224,33 @@ def check_payback(f: FinanceRaw) -> FinanceCheck:
 
 
 def check_break_even(f: FinanceRaw) -> FinanceCheck:
-    return FinanceCheck(label="손익분기점", original=None, formula=None, result="근거 누락")
+    label = "손익분기점"
+
+    # 1) 원문에 손익분기 매출이 없으면 근거 누락
+    original = f.break_even_sales
+    if original is None:
+        return FinanceCheck(label=label, original=None, formula=None, result="근거 누락")
+    display = to_manwon(original)
+
+    # 2) 고정비 = 월 운영 비용 항목 중 변동비(재료비 등)를 뺀 합
+    fixed_items = [item.amount for item in f.monthly_costs
+                   if item.amount is not None and not re.search(VARIABLE_COST_PATTERN, item.name)]
+    ratio = f.material_ratio
+    # 3) 고정비 항목이나 재료비 비율이 없으면 검산할 수 없음
+    if not fixed_items or ratio is None or not 0 < ratio < 100:
+        return FinanceCheck(label=label, original=display, formula=None, result="근거 누락")
+
+    # 4) 손익분기 매출 = 고정비 ÷ (1 - 재료비 비율)
+    fixed = sum(fixed_items)
+    calc = round(fixed / (1 - ratio / 100))
+    formula = f"{to_manwon(fixed)} ÷ (1 - {ratio:g}%) = 약 {to_manwon(round(calc, -4))}"
+
+    if abs(original - calc) <= calc * BREAK_EVEN_TOLERANCE_RATE:
+        result = "일치"
+    else:
+        result = "불일치"
+
+    return FinanceCheck(label=label, original=display, formula=formula, result=result)
 
 
 def build_finance_checks(f: FinanceRaw) -> list[FinanceCheck]:
@@ -295,6 +329,7 @@ FINANCE_ACTIONS = {
     "운영 비용": "세부 항목의 합과 적힌 월 운영 비용 합계가 다릅니다. 빠진 비용 항목이 있으면 추가하고, 없으면 합계를 고쳐 적으세요.",
     "월 순이익": "월 매출에서 월 운영 비용을 뺀 값과 다릅니다. 매출과 비용 수치를 다시 확인해 순이익을 고쳐 적으세요.",
     "투자금 회수 기간": "창업 비용을 월 순이익으로 나눈 값과 다릅니다. 두 수치를 기준으로 회수 기간을 다시 계산해 적으세요.",
+    "손익분기점": "고정비를 (1 - 재료비 비율)로 나눈 값과 다릅니다. 재료비처럼 매출에 따라 변하는 비용을 고정비에 함께 넣지 않았는지 확인하고 다시 계산해 적으세요.",
 }
 DEFAULT_FINANCE_ACTION = "원문 수치를 다시 계산해 고쳐 적으세요."
 
@@ -310,12 +345,19 @@ def build_finance_suggestions(checks: list[FinanceCheck]) -> list[Suggestion]:
                 problem=f"{check.label} 수치 오류 (원문: {check.original})",
                 action=f"검산 결과({check.formula})와 맞지 않습니다. {FINANCE_ACTIONS.get(check.label, DEFAULT_FINANCE_ACTION)}",
             ))
-        # 손익분기점은 원문에 없으면 항상 근거 누락 → 보통
+        # 손익분기점 근거 누락 → 보통 (원문에 없으면 미제시, 있으면 산출 근거 부족)
         elif check.label == "손익분기점" and check.result == "근거 누락":
-            suggestions.append(Suggestion(
-                priority="보통",
-                problem="손익분기점 미제시",
-                action="고정비와 재료비 비율로 손익분기 월 매출과 하루에 필요한 고객 수를 계산해 넣으세요.",
-            ))
+            if check.original is None:
+                suggestions.append(Suggestion(
+                    priority="보통",
+                    problem="손익분기점 미제시",
+                    action="고정비와 재료비 비율로 손익분기 월 매출과 하루에 필요한 고객 수를 계산해 넣으세요.",
+                ))
+            else:
+                suggestions.append(Suggestion(
+                    priority="보통",
+                    problem=f"손익분기점 산출 근거 부족 (원문: {check.original})",
+                    action="월 운영 비용 항목과 재료비 비율(매출 대비 %)을 함께 적어 손익분기 매출을 어떻게 계산했는지 보여 주세요.",
+                ))
 
     return suggestions
