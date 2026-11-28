@@ -17,7 +17,7 @@ llm = ChatGoogleGenerativeAI(
     model=GEMINI_MODEL,
     temperature=0,
     google_api_key=GEMINI_API_KEY,
-    max_retries=3
+    max_retries=1
 )
 def get_llm():
     return llm
@@ -41,7 +41,7 @@ def get_area_llm():
             model=GEMINI_AREA_MODEL,
             temperature=0,
             google_api_key=GEMINI_AREA_API_KEY,
-            max_retries=3
+            max_retries=1
         )
 
     return area_llm
