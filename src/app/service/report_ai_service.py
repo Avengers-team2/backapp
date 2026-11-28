@@ -6,9 +6,12 @@ from app.infrastructure.llm import get_llm
 from app.schema.report_ai_schema import (Evidence, FinanceRaw, ItemKey, ItemReview, ReportAiLlmOutput,
     ReportAiResult, Suggestion)
 from app.util.report_paragraph_util import split_report_paragraphs
+from app.util.report_specificity_util import is_specific
+from app.util.report_model_feedback_util import (build_final_opinion, build_item_gaps, build_item_strengths,
+    build_key_strengths, build_summary)
 from app.util.report_finance_extract_util import extract_finance
 from app.util.report_finance_util import (build_finance_checks, build_finance_suggestions, build_grades,
-    calc_total_score, cap_profit_score, total_to_grade)
+    calc_total_score, cap_profit_score, total_to_grade, PROFIT_ITEM_KEY, PROFIT_MAX_SCORE_WHEN_MISMATCH)
 
 PROMPT = "v3.3"
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "llm_prompt" / "startfit_review_prompt.md"
@@ -19,7 +22,8 @@ FINANCE_PROMPT_PATH = Path(__file__).resolve().parent.parent / "llm_prompt" / "s
 # 문단 분류 모델 모드 (.env REVIEW_MODE=model 일 때 Gemini 대신 사용)
 # MODEL_VERSION = "model-exp2"   # 상아 RoBERTa
 # MODEL_VERSION = "model-tfidf"   # 희수 TF-IDF
-MODEL_VERSION = "model-ensemble"   # RoBERTa + TF-IDF 평균
+# MODEL_VERSION = "model-ensemble"   # RoBERTa + TF-IDF 평균 (점수 = 문단 개수)
+MODEL_VERSION = "model-ensemble-spec"   # RoBERTa + TF-IDF 평균, 점수 = 구체적 문단 기준
 
 ITEM_NAMES = {
     "item_differentiation": "사업 아이템 및 차별성",
@@ -89,6 +93,31 @@ def count_to_score(count: int) -> int:
     return 4
 
 
+# 항목 점수: 관련 문단 수(total)와 그중 구체적인 문단 수(specific_count)로 정한다
+def specificity_to_score(total: int, specific_count: int) -> int:
+    if total == 0:
+        return 1
+    if specific_count == 0:
+        return 2
+    if specific_count == 1:
+        return 3
+    if specific_count >= 3 and specific_count * 2 >= total:
+        return 5
+    return 4
+
+
+# 모델 모드 전용: 재무 검산이 절반 이상 "근거 누락"이면 수익성 점수를 최대 3단계로 묶는다
+# (문단에 숫자는 있어도 검산할 근거가 없는 기획서가 수익성 우수를 받지 않도록)
+def cap_profit_score_when_missing(items: list[ItemReview], checks) -> None:
+    targets = list(checks)
+    missing = sum(1 for check in targets if check.result == "근거 누락")
+    if not targets or missing * 2 < len(targets):
+        return
+    for item in items:
+        if item.item_key == PROFIT_ITEM_KEY and item.score > PROFIT_MAX_SCORE_WHEN_MISMATCH:
+            item.score = PROFIT_MAX_SCORE_WHEN_MISMATCH
+
+
 async def analyze_report_with_model(text: str) -> ReportAiResult:
     # torch·transformers가 없는 환경에서도 서버가 켜지도록 모델 모드일 때만 불러온다
     from app.infrastructure.paragraph_model import predict_paragraphs
@@ -102,40 +131,71 @@ async def analyze_report_with_model(text: str) -> ReportAiResult:
 
     items = []
     suggestions = []
+    specific_counts = {}   # 항목별 구체적 문단 수 (핵심 강점 문구용)
+    total_paragraphs = 0   # 6개 항목으로 분류된 문단 수 (총평용)
     for key in ITEM_KEY_ORDER:
         matched = [(page, para, prob) for (page, _, para), (label, prob) in zip(paragraphs, preds) if label == key]
+        specific = [m for m in matched if is_specific(m[1])]
+        specific_counts[key] = len(specific)
+        total_paragraphs += len(matched)
         count = len(matched)
         if count == 0 and any(word in sections for word in SECTION_KEYWORDS[key]):
             count = 1
-        score = count_to_score(count)
+        score = specificity_to_score(count, len(specific))
 
         if matched:
-            best = max(matched, key=lambda m: m[2])
+            # 구체적인 문단이 있으면 그중에서, 없으면 전체에서 확률이 가장 높은 문단을 근거로 보여준다
+            best = max(specific or matched, key=lambda m: m[2])
             evidence = Evidence(quote=best[1][:100], page=best[0],
-                                judgment=f"관련 문단 {len(matched)}개를 찾았습니다.")
-            gaps = []
+                                judgment=f"관련 문단 {len(matched)}개 중 구체적 문단 {len(specific)}개를 찾았습니다.")
+            if not specific:
+                suggestions.append(Suggestion(priority="보통",
+                                              problem=f"{ITEM_NAMES[key]}에 구체적인 수치나 근거가 부족합니다.",
+                                              action=f"{ITEM_NAMES[key]}에 금액·인원·기간 등 구체적인 수치를 추가해 주세요."))
         else:
             evidence = Evidence(quote=None, page=None, judgment="관련 문단을 찾지 못했습니다 (확인 필요).")
-            gaps = [f"{ITEM_NAMES[key]} 관련 내용을 찾지 못함"]
+
+        # 잘된 점 / 보완할 점 (규칙으로 생성)
+        matched_texts = [m[1] for m in matched]
+        strengths = build_item_strengths(key, matched_texts, [m[1] for m in specific],
+                                         best[1] if matched else None)
+        gaps = build_item_gaps(key, ITEM_NAMES[key], matched_texts, len(specific))
 
         if score == 1:
             suggestions.append(Suggestion(priority="보통",
                                           problem=f"{ITEM_NAMES[key]} 관련 내용을 찾지 못했습니다.",
                                           action=f"{ITEM_NAMES[key]} 내용을 추가해 주세요."))
 
-        items.append(ItemReview(item_key=key, score=score, evidence=evidence, gaps=gaps))
+        items.append(ItemReview(item_key=key, score=score, evidence=evidence, strengths=strengths, gaps=gaps))
 
     finance, finance_source = await extract_finance_for_model(text, paragraphs)
 
-    llm_output = ReportAiLlmOutput(status="OK",
-                                   summary=f"문단 분류 모델로 항목별 관련 문단을 확인한 간이 검토 결과입니다. (재무 수치: {finance_source})",
+    summary_head = f"문단 분류 모델로 항목별 관련 문단을 확인한 간이 검토 결과입니다. (재무 수치: {finance_source})"
+    llm_output = ReportAiLlmOutput(status="OK", summary=summary_head,
                                    items=items, finance=finance, suggestions=suggestions)
 
     # 재무 수치는 원문 값만 뽑았으므로 Gemini 모드와 같은 방식으로 검산한다
     finance_checks = build_finance_checks(llm_output.finance)
+    profit = next(item for item in llm_output.items if item.item_key == PROFIT_ITEM_KEY)
+    before = profit.score
     cap_profit_score(llm_output.items, finance_checks)
+    after_mismatch = profit.score
+    cap_profit_score_when_missing(llm_output.items, finance_checks)
+    # 상한으로 수익성 점수가 깎였으면 그 이유를 보완할 점에 적는다
+    if after_mismatch < before:
+        profit.gaps.append("재무 검산에서 맞지 않는 수치가 있어 보통 등급까지만 인정됩니다 (재무 수치 검산 참고)")
+    elif profit.score < before:
+        profit.gaps.append("재무 수치 대부분의 근거(세부 금액·산출 방식)가 없어 보통 등급까지만 인정됩니다")
     merged = build_finance_suggestions(finance_checks) + llm_output.suggestions
     llm_output.suggestions = sorted(merged, key=lambda s: PRIORITY_ORDER[s.priority])
+
+    # 총평·핵심 강점·최종 의견 (점수 상한까지 적용한 최종 점수 기준)
+    total_specific = sum(specific_counts.values())
+    llm_output.summary = build_summary(summary_head, llm_output.items, ITEM_NAMES, total_paragraphs,
+                                       total_specific, llm_output.suggestions)
+    llm_output.key_strengths = build_key_strengths(llm_output.items, ITEM_NAMES, specific_counts)
+    has_mismatch = any(check.result == "불일치" for check in finance_checks)
+    llm_output.final_opinion = build_final_opinion(llm_output.items, ITEM_NAMES, has_mismatch)
     grades = build_grades(llm_output.items)
     total_score = calc_total_score(llm_output.items)
     total_grade = total_to_grade(total_score)

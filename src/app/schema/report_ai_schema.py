@@ -112,6 +112,10 @@ class FinanceRaw(BaseModel):
         default=None,
         description="기획서에 적힌 투자금 회수 기간(개월). 직접 계산하지 말 것, 없으면 null",
     )
+    break_even_sales: int | None = Field(
+        default=None,
+        description="기획서에 적힌 손익분기 월 매출(원). 직접 계산하지 말 것, 금액이 아니면(예: 하루 고객 수만 적힘) null",
+    )
 
 
 # ─────────────────────────────────────────

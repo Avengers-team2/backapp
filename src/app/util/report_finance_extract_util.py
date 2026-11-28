@@ -105,7 +105,7 @@ def extract_finance_values(paragraphs: list[tuple[str, str]]) -> dict:
         "unit_price": None, "daily_customers": None, "operating_days": None,
         "monthly_sales": None, "material_ratio": None,
         "monthly_costs": [], "monthly_cost_total": None,
-        "monthly_profit": None, "payback_months": None,
+        "monthly_profit": None, "payback_months": None, "break_even_sales": None,
     }
 
     # 재무 목차가 하나라도 있으면 목차 기준, 없으면 항목 이름 키워드 기준
@@ -126,6 +126,8 @@ def extract_finance_values(paragraphs: list[tuple[str, str]]) -> dict:
         if values["payback_months"] is None:
             m = re.search(r"회수[^.]*?(\d+(?:\.\d+)?)\s*개월", text)
             values["payback_months"] = float(m.group(1)) if m else None
+        if values["break_even_sales"] is None:
+            values["break_even_sales"] = amount_after(text, r"손익\s*분기")
         if values["monthly_sales"] is None and not re.search(r"손익\s*분기", text):
             values["monthly_sales"] = amount_after(text, r"(?:월\s*(?:예상\s*)?|예상\s*월?\s*)매출")
         if values["monthly_profit"] is None:
